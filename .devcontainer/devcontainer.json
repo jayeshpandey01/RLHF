@@ -1,0 +1,41 @@
+{
+  "name": "Autonomous Continual Learning LLM (Codespaces)",
+  "image": "mcr.microsoft.com/devcontainers/python:3.11-bookworm",
+  "remoteEnv": {
+    "OLLAMA_MODELS": "/workspaces/autonomous-learning-llm/.ollama/models",
+    "PYTHONPATH": "/workspaces/autonomous-learning-llm"
+  },
+  "forwardPorts": [8000, 3000, 11434],
+  "portsAttributes": {
+    "8000": {
+      "label": "FastAPI Backend & RAG",
+      "onAutoForward": "notify"
+    },
+    "3000": {
+      "label": "Chat UI",
+      "onAutoForward": "openBrowser"
+    },
+    "11434": {
+      "label": "Ollama Inference Engine",
+      "onAutoForward": "silent"
+    }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "charliermarsh.ruff",
+        "tamasfe.even-better-toml"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/workspaces/autonomous-learning-llm/.venv/bin/python",
+        "editor.formatOnSave": true,
+        "[python]": {
+          "editor.defaultFormatter": "charliermarsh.ruff"
+        }
+      }
+    }
+  },
+  "postCreateCommand": "bash scripts/bootstrap_m0.sh"
+}

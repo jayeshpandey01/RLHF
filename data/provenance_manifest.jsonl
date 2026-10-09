@@ -1,0 +1,2 @@
+{"url":"https://en.wikipedia.org/wiki/Transformer","sha256_hash":"2d58611a6bab9cba584f6b527e9f1d3cd3c117b191f64fa38a226a21c59feaa6","source_name":"wikipedia","timestamp":"2026-10-09T20:43:04.652954Z","status_code":200,"latency_ms":0.09179200060316361,"content_length":34}
+{"url":"https://arxiv.org/abs/1706.03762","sha256_hash":"706a547f08fbb8b481c0762924c43cc514a99dbadddd0b756fad433314409781","source_name":"arxiv","timestamp":"2026-10-09T20:43:04.653110Z","status_code":200,"latency_ms":0.2172089989471715,"content_length":41}

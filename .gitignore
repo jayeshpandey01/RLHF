@@ -1,0 +1,43 @@
+# Python & Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Environments & Packaging
+.venv/
+env/
+venv/
+.uv/
+*.egg-info/
+dist/
+build/
+
+# IDE & OS
+.DS_Store
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea/
+
+# Local Model Weights & Cache (CRITICAL: Do not commit multi-gigabyte models)
+.ollama/
+models/
+checkpoints/
+candidate_checkpoints/
+*.gguf
+*.bin
+*.safetensors
+*.pt
+
+# Local Logs & Artifacts
+logs/
+*.log
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local Environment Variables
+.env
+.env.local
