@@ -2364,6 +2364,661 @@ class GoldenBenchmarkSuite:
    - JSON export and load serialization roundtrip.
 4. **Step 4.1.4**: Integrate Phase 4.1 into master test runner `tests/run_all.py` and confirm 100% test pass rate.
 
+---
+
+### 8.9 Phase 4.2 Specification: Citation Extraction, Token Faithfulness, & RAG Triad Verifier
+
+#### 1. Theoretical Rationale & The Attribution Verification Problem
+In production generative systems with retrieval-augmented generation (RAG) and continual learning, language models often generate syntactically convincing, fluent answers decorated with fictitious citations or superficial attribution tags (e.g., placing `[1]` next to a fact that appears nowhere in document 1).
+
+Phase 4.2 operationalizes the **ALCE benchmark** (Gao et al., EMNLP 2023) and the **RAG Triad** (Es et al., EACL 2024) to programmatically audit model responses for factual grounding, citation precision, and hallucination containment.
+
+---
+
+#### 2. Mathematical Formulations & Scoring Equations
+
+##### 2.1 Citation Extraction Grammar
+Let text $Y$ contain arbitrary inline citations. The canonical citation parser recognizes:
+1. **Numeric Brackets**: `[1]`, `[2]`, `[1, 2]`, `[1,2,3]`
+2. **Numeric Ranges**: `[1-3]`, `[2-4]` expanded into discrete integer citations
+3. **Author-Year Citations**: `(Vaswani et al., 2017)`, `[Hu et al., 2021]`, `Pascanu et al. (2013)`
+4. **Markdown Hyperlink Citations**: `[Source Title](https://example.com/doc)`
+
+##### 2.2 Claim Segmentation & Factual Classification
+Text $Y$ is segmented into sentences $S = \{s_1, \dots, s_N\}$.
+Each sentence is classified into factual or non-factual using lexical conversational filters:
+$$\text{Factual}(s) = \begin{cases}
+0 & \text{if } s \text{ is an introductory greeting, transitional cue, or boilerplate pleasantry} \\
+1 & \text{otherwise}
+\end{cases}$$
+
+Let $S_{\text{fact}} = \{s \in S \mid \text{Factual}(s) = 1\}$.
+
+##### 2.3 Multi-Tier Grounding Entailment Index
+Given an atomic sentence claim $s$ and reference document $D$, we compute semantic entailment without external cloud APIs using a robust hybrid containment metric:
+$$C_{\text{lex}}(s, D) = \frac{|\text{ContentTokens}(s) \cap \text{Tokens}(D)|}{|\text{ContentTokens}(s)|}$$
+$$J_{\text{token}}(s, D) = \frac{|\text{Tokens}(s) \cap \text{Tokens}(D)|}{|\text{Tokens}(s) \cup \text{Tokens}(D)|}$$
+$$S_{\text{ground}}(s, D) = \alpha \cdot C_{\text{lex}}(s, D) + (1 - \alpha) \cdot J_{\text{token}}(s, D), \quad \alpha = 0.70$$
+
+The entailment predicate is defined as:
+$$D \models s \iff S_{\text{ground}}(s, D) \ge \tau_{\text{entail}} \quad (\tau_{\text{entail}} = 0.60)$$
+
+##### 2.4 ALCE Citation Metrics (Gao et al., 2023)
+For each factual sentence $s_i \in S_{\text{fact}}$ with associated citation set $C(s_i)$:
+1. **Citation Recall ($Rec_{\text{cite}}$)**:
+   $$Rec_{\text{cite}} = \frac{1}{|S_{\text{fact}}|} \sum_{s_i \in S_{\text{fact}}} \mathbb{I}\left(\exists c \in C(s_i) \text{ s.t. } D_c \models s_i\right)$$
+2. **Citation Precision ($Prec_{\text{cite}}$)**:
+   $$Prec_{\text{cite}} = \frac{\sum_{s_i \in S_{\text{fact}}} \sum_{c \in C(s_i)} \mathbb{I}(D_c \models s_i)}{\max\left(1, \sum_{s_i \in S_{\text{fact}}} |C(s_i)|\right)}$$
+3. **Harmonic Citation $F_1$**:
+   $$F_{1, \text{cite}} = \frac{2 \cdot Prec_{\text{cite}} \cdot Rec_{\text{cite}}}{Prec_{\text{cite}} + Rec_{\text{cite}} + \epsilon}$$
+
+##### 2.5 RAGAS Faithfulness Score (Es et al., 2024)
+Evaluates whether all generated factual claims in the answer are strictly supported by the ground-truth reference context $D_{\text{all}}$, independent of whether citations were explicitly placed:
+$$\mathcal{F}(Y, D_{\text{all}}) = \frac{|\{s \in S_{\text{fact}} \mid D_{\text{all}} \models s\}|}{|S_{\text{fact}}|}$$
+
+---
+
+#### 3. Mermaid Architectural Dataflow for Phase 4.2
+
+```mermaid
+flowchart TD
+    subgraph Input["1. Input Response & Context"]
+        Resp["Generated Model Response Y"]
+        Context["Ground Truth Reference Context D"]
+    end
+
+    subgraph Parsing["2. Parsing & Segmentation"]
+        Resp --> CiteParse["Citation Parser<br/>- Numeric [1], [2], [1-3]<br/>- Author-Year (Vaswani et al., 2017)<br/>- Markdown Links"]
+        Resp --> SentSplit["Sentence & Claim Splitter<br/>- Abbreviation-Safe Segmentation<br/>- Conversational Boilerplate Filter"]
+        CiteParse --> Mapper["Citation-to-Sentence Alignment"]
+        SentSplit --> Mapper
+    end
+
+    subgraph Entailment["3. Multi-Tier Grounding Verification"]
+        Mapper --> Verifier["Grounding Entailment Engine<br/>- Content Token Containment C_lex >= 0.60<br/>- Jaccard Token Overlap J_token"]
+        Context --> Verifier
+    end
+
+    subgraph MetricsOutput["4. Quantitative Metrics Dossier"]
+        Verifier --> Prec["ALCE Citation Precision<br/>Supported Citations / Total Citations"]
+        Verifier --> Rec["ALCE Citation Recall<br/>Supported Sentences / Total Sentences"]
+        Verifier --> Faith["Ragas Faithfulness Score<br/>Ground-Truth Supported Claims / Total Claims"]
+        Prec --> Dossier["CitationMetrics Report"]
+        Rec --> Dossier
+        Faith --> Dossier
+    end
+
+    style Input fill:#1e293b,stroke:#38bdf8,stroke-width:2px,color:#fff
+    style Parsing fill:#4c1d95,stroke:#a855f7,stroke-width:2px,color:#fff
+    style Entailment fill:#064e3b,stroke:#10b981,stroke-width:2px,color:#fff
+    style MetricsOutput fill:#047857,stroke:#10b981,stroke-width:2px,color:#fff
+```
+
+---
+
+#### 4. Component Design: `evaluation/citation_verifier.py`
+
+```python
+@dataclass
+class CitationTag:
+    """Parsed citation marker with normalized reference indices."""
+    raw_tag: str
+    tag_type: Literal["numeric", "numeric_range", "author_year", "markdown_url"]
+    normalized_indices: list[str]
+    start_char: int
+    end_char: int
+
+@dataclass
+class SentenceClaim:
+    """Individual segmented sentence with attached citations and entailment audit."""
+    sentence_idx: int
+    raw_text: str
+    clean_claim: str
+    citations: list[CitationTag]
+    is_factual: bool
+    supported_by_citations: bool = False
+    supporting_citations: list[str] = field(default_factory=list)
+    unsupported_citations: list[str] = field(default_factory=list)
+    context_entailed: bool = False
+
+@dataclass
+class CitationMetrics:
+    """Quantitative citation precision, recall, and factual faithfulness metrics."""
+    citation_precision: float
+    citation_recall: float
+    citation_f1: float
+    faithfulness_score: float
+    total_sentences: int
+    factual_sentences: int
+    total_citations: int
+    valid_citations: int
+    unsupported_claims: list[str] = field(default_factory=list)
+    hallucinated_citations: list[str] = field(default_factory=list)
+    summary: str = ""
+
+class CitationVerifier:
+    """Extracts citation markers, segments atomic propositions, and verifies entailment."""
+    def __init__(self, entailment_threshold: float = 0.60, strict_mode: bool = True):
+        ...
+
+    def extract_citations(self, text: str) -> list[CitationTag]:
+        ...
+
+    def segment_claims(self, text: str) -> list[SentenceClaim]:
+        ...
+
+    def check_entailment(self, claim: str, context: str) -> tuple[bool, float]:
+        ...
+
+    def verify_response(
+        self,
+        response: str,
+        ground_truth_context: str,
+        reference_documents: Optional[dict[str, str]] = None,
+    ) -> CitationMetrics:
+        ...
+
+    def verify_benchmark_case(
+        self, case: GoldenTestCase, response: str
+    ) -> CitationMetrics:
+        ...
+```
+
+---
+
+#### 5. Concrete Step-by-Step Implementation Sequence for Phase 4.2
+1. **Step 4.2.1**: Implement `evaluation/citation_verifier.py` containing `CitationTag`, `SentenceClaim`, `CitationMetrics`, and `CitationVerifier`.
+2. **Step 4.2.2**: Export `CitationTag`, `SentenceClaim`, `CitationMetrics`, and `CitationVerifier` in `evaluation/__init__.py`.
+3. **Step 4.2.3**: Implement `tests/test_m4_citation_verifier.py` with comprehensive unit and integration tests:
+   - Citation extraction across numeric `[1]`, numeric ranges `[1-3]`, comma lists `[1, 2]`, author-year `(Vaswani et al., 2017)`, and markdown links.
+   - Sentence claim segmentation with abbreviation safety (`et al.`, `i.e.`, `e.g.`) and non-factual pleasantry filtering.
+   - Grounding entailment calculation across supported, partially supported, and unsupported texts.
+   - Perfect citation verification scenario (Precision = 1.0, Recall = 1.0, Faithfulness = 1.0).
+   - Hallucinated / unsupported citation scenario (Precision = 0.0, Recall = 0.0, Faithfulness < 0.85).
+   - Integration with `GoldenTestCase` from Phase 4.1.
+4. **Step 4.2.4**: Integrate Phase 4.2 tests into `tests/run_all.py` and verify 100% test pass rate.
+
+---
+
+### 8.10 Phase 4.3: LLM-as-a-Judge Engine, Rubric Calibration, & Systematic Bias Mitigation
+
+#### 1. Theoretical Motivation & Foundations
+In automated LLM alignment and continual post-training workflows, standard n-gram overlap metrics (BLEU, ROUGE) are well-known to correlate poorly with human judgments of reasoning depth, conceptual correctness, and stylistic coherence. Zheng et al. (NeurIPS 2023, *"Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena"*) demonstrated that strong LLMs acting as automated judges achieve $>80\%$ agreement with human domain experts.
+
+However, uncalibrated LLM judges exhibit severe systematic cognitive biases that distort benchmark outcomes if left unmitigated:
+1. **Position Bias (Order Effect)**:
+   Judges disproportionately favor the first candidate ($M_A$) or second candidate ($M_B$) in pairwise comparisons based purely on presentation sequence.
+2. **Verbosity Bias (Length Heuristic)**:
+   Judges assign systematically higher scores to verbose, padded responses even when a concise alternative contains identical or superior factual content.
+3. **Self-Enhancement / Egocentric Bias**:
+   Judges systematically elevate candidate generations produced by models of their own architecture or family.
+4. **Reasoning Anchoring & Output Variance**:
+   When prompted directly for scalar scores, judges exhibit high stochastic variance. Enforcing step-by-step Chain-of-Thought (CoT) rationale *prior* to score emission significantly improves rubric consistency.
+
+To establish a production-grade evaluation engine suitable for both local development (deterministic, fast, zero-GPU/API dependency) and high-fidelity cloud evaluation (LLM-backed inference), Phase 4.3 implements a **Dual-Engine Architecture**:
+- **Engine A: Generative Model Engine**: Formats rigorous ChatML evaluation prompts requesting step-by-step reasoning followed by strict JSON schema outputs, with defensive multi-pattern regex fallback parsing.
+- **Engine B: Deterministic Heuristic Engine**: An analytical rubric evaluator that computes identical 4-dimensional scores ($[1.0, 5.0]$) by synthesizing key concept recall, ground-truth context lexical overlap, sentence-level citation entailment (from Phase 4.2 `CitationVerifier`), and structural repetition penalties.
+
+---
+
+#### 2. Mathematical Formalization & Bias Mitigation Equations
+
+```mermaid
+flowchart TD
+    subgraph Inputs ["Evaluation Inputs"]
+        Q["Prompt / Query (x)"]
+        RespA["Candidate Response A (y_A)"]
+        RespB["Candidate Response B (y_B)"]
+        GT["Golden Reference (y*) & Context (C)"]
+    end
+
+    subgraph Pass1 ["Pass 1: Order (A, B)"]
+        P1["Present Order: Candidate 1 = A, Candidate 2 = B"]
+        J1["Evaluate with CoT Rubric"]
+        S1["Scores: s1(A), s1(B)"]
+        P1 --> J1 --> S1
+    end
+
+    subgraph Pass2 ["Pass 2: Order (B, A) [Position-Swap]"]
+        P2["Present Order: Candidate 1 = B, Candidate 2 = A"]
+        J2["Evaluate with CoT Rubric"]
+        S2["Scores: s2(B), s2(A)"]
+        P2 --> J2 --> S2
+    end
+
+    subgraph Debiasing ["Debiasing & Calibration Engine"]
+        Avg["Position-Averaged Score:<br/>S_bar(A) = 0.5 * (s1(A) + s2(A))<br/>S_bar(B) = 0.5 * (s1(B) + s2(B))"]
+        Incon["Inconsistency Metric:<br/>kappa_pos = 0.5 * (|s1(A)-s2(A)| + |s1(B)-s2(B)|) / 4.0"]
+        LenPen["Length Penalty Multiplier:<br/>phi(r_L) = exp(-lambda * max(0, r_L - tau))"]
+        Calib["Calibrated Scores:<br/>S_cal(A) = S_bar(A) * phi(r_L_A)<br/>S_cal(B) = S_bar(B) * phi(r_L_B)"]
+    end
+
+    subgraph Decision ["Gating Outcome"]
+        Win{"Margin: |Delta| > epsilon_tie?"}
+        WinA["Winner: Candidate A"]
+        WinB["Winner: Candidate B"]
+        Tie["Outcome: TIE"]
+    end
+
+    Q & RespA & RespB & GT --> Pass1
+    Q & RespA & RespB & GT --> Pass2
+    S1 & S2 --> Avg
+    S1 & S2 --> Incon
+    Avg --> Calib
+    LenPen --> Calib
+    Calib --> Win
+    Win -- "Delta > 0.15" --> WinA
+    Win -- "Delta < -0.15" --> WinB
+    Win -- "|Delta| <= 0.15" --> Tie
+```
+
+##### (A) Multi-Dimensional Rubric Calibration
+A response $y$ is evaluated across $K = 4$ calibrated dimensions on a 5-point Likert scale $[1.0, 5.0]$:
+1. **Accuracy ($\mathcal{A} \in [1.0, 5.0]$)**:
+   Degree of factual truthfulness, alignment with golden reference facts $y^*$, and absence of incorrect claims.
+2. **Faithfulness ($\mathcal{F} \in [1.0, 5.0]$)**:
+   Degree to which all claims are strictly grounded in reference context $C$, penalizing unverified assertions.
+3. **Clarity ($\mathcal{C} \in [1.0, 5.0]$)**:
+   Structural coherence, grammatical fluidity, logical progression, and formatting quality.
+4. **Conciseness ($\mathcal{K} \in [1.0, 5.0]$)**:
+   Information density, avoidance of conversational fluff, circular padding, or repetitive rhetoric.
+
+The raw composite score $\mathcal{S}_{\text{raw}}(y)$ is computed as the convex combination:
+$$\mathcal{S}_{\text{raw}}(y) = w_{\mathcal{A}} \mathcal{A} + w_{\mathcal{F}} \mathcal{F} + w_{\mathcal{C}} \mathcal{C} + w_{\mathcal{K}} \mathcal{K}, \quad \sum_{k} w_k = 1.0$$
+Standard post-training default weights:
+$$w_{\mathcal{A}} = 0.35, \quad w_{\mathcal{F}} = 0.35, \quad w_{\mathcal{C}} = 0.15, \quad w_{\mathcal{K}} = 0.15$$
+
+##### (B) Verbosity Bias Mitigation (Length-Normalized Penalty)
+Judges exhibit an unprincipled preference for longer sequences. To correct this, let $L(y) = |y|_{\text{tokens}}$ and $L^* = \max(|y^*|_{\text{tokens}}, 1)$.
+The length ratio is:
+$$r_L(y) = \frac{L(y)}{L^*}$$
+We define the soft-threshold length penalty multiplier $\phi(r_L)$:
+$$\phi(r_L) = \begin{cases}
+1.0 & \text{if } r_L \le \tau_{\text{len}} \\
+\exp\left(-\lambda_{\text{len}} (r_L - \tau_{\text{len}})\right) & \text{if } r_L > \tau_{\text{len}}
+\end{cases}$$
+where $\tau_{\text{len}} = 1.8$ (generous tolerance before penalty) and $\lambda_{\text{len}} = 0.15$ (exponential decay rate).
+The calibrated scalar score is bounded below by 1.0:
+$$\mathcal{S}_{\text{calibrated}}(y) = \max\left(1.0, \, \mathcal{S}_{\text{raw}}(y) \cdot \phi(r_L)\right)$$
+
+##### (C) Pairwise Position Bias Mitigation (Position-Swap Averaging)
+In pairwise comparisons between Candidate $A$ and Candidate $B$, evaluation is conducted in two symmetric passes:
+- **Pass 1** (Sequence: $[A, B]$): Judge produces individual ratings $s_1(A)$ and $s_1(B)$.
+- **Pass 2** (Sequence: $[B, A]$): Judge produces individual ratings $s_2(B)$ and $s_2(A)$.
+
+The position-debiased ratings are defined as:
+$$\bar{S}(A) = \frac{s_1(A) + s_2(A)}{2}, \quad \bar{S}(B) = \frac{s_1(B) + s_2(B)}{2}$$
+$$\Delta_{\text{debiased}} = \bar{S}(A) - \bar{S}(B)$$
+
+Given tie tolerance threshold $\epsilon_{\text{tie}} = 0.15$:
+$$\text{Winner} = \begin{cases}
+\text{'A'} & \text{if } \Delta_{\text{debiased}} > \epsilon_{\text{tie}} \\
+\text{'B'} & \text{if } \Delta_{\text{debiased}} < -\epsilon_{\text{tie}} \\
+\text{'TIE'} & \text{if } |\Delta_{\text{debiased}}| \le \epsilon_{\text{tie}}
+\end{cases}$$
+
+We quantify the judge's positional vulnerability via the **Position Inconsistency Coefficient** $\kappa_{\text{pos}} \in [0.0, 1.0]$:
+$$\kappa_{\text{pos}} = \frac{1}{2} \cdot \frac{|s_1(A) - s_2(A)| + |s_1(B) - s_2(B)|}{4.0}$$
+where the normalization factor $4.0$ represents the maximum possible score delta ($5.0 - 1.0$). If $\kappa_{\text{pos}} > 0.25$, an inconsistency alert is logged.
+
+##### (D) Deterministic Heuristic Scoring Equations
+For offline testing and environments without live LLM inference endpoints, the deterministic heuristic engine computes rubric dimensions analytically:
+1. **Accuracy**:
+   $$\mathcal{A}_{\text{heur}} = 1.0 + 4.0 \cdot \left(0.60 \cdot \text{Coverage}(y, \mathcal{K}^*) + 0.40 \cdot \text{Jaccard}(y, y^*)\right)$$
+2. **Faithfulness**:
+   Utilizes the Phase 4.2 `CitationVerifier` sentence-level factual entailment:
+   $$\mathcal{F}_{\text{heur}} = 1.0 + 4.0 \cdot \text{FaithfulnessScore}(y, C)$$
+3. **Clarity**:
+   Penalizes degenerative token repetition and formatting irregularities:
+   $$\text{RepPenalty}(y) = 1.0 - \frac{|\text{Unique 3-grams}(y)|}{\max(|\text{Total 3-grams}(y)|, 1)}$$
+   $$\mathcal{C}_{\text{heur}} = \max\left(1.0, 5.0 - 4.0 \cdot \text{RepPenalty}(y)\right)$$
+4. **Conciseness**:
+   $$\mathcal{K}_{\text{heur}} = 1.0 + 4.0 \cdot \max\left(0.0, \min\left(1.0, 2.0 - r_L(y)\right)\right)$$
+
+---
+
+#### 3. Core Architecture & Class Contracts
+
+```python
+@dataclass
+class JudgeScore:
+    """Multi-dimensional evaluation score emitted by the LLM Judge."""
+    accuracy: float            # [1.0, 5.0]
+    faithfulness: float        # [1.0, 5.0]
+    clarity: float             # [1.0, 5.0]
+    conciseness: float         # [1.0, 5.0]
+    raw_composite: float       # Weighted sum before length penalty
+    calibrated_score: float    # Post-length-penalty calibrated score
+    length_penalty: float      # Multiplier in (0.0, 1.0]
+    rationale: str             # Chain-of-thought explanation
+    mode: str                  # "model" or "heuristic"
+
+@dataclass
+class PairwiseJudgeResult:
+    """Position-debiased pairwise comparison result."""
+    winner: str                      # 'A', 'B', or 'TIE'
+    score_a: float                   # Debiased calibrated score for A
+    score_b: float                   # Debiased calibrated score for B
+    score_delta: float               # score_a - score_b
+    position_inconsistency: float    # kappa_pos in [0.0, 1.0]
+    pass1_winner: str                # Winner in order (A, B)
+    pass2_winner: str                # Winner in order (B, A)
+    score_a_pass1: float
+    score_a_pass2: float
+    score_b_pass1: float
+    score_b_pass2: float
+    rationale: str
+
+class LLMJudge:
+    """Production LLM-as-a-Judge engine with rubric calibration and bias mitigation."""
+    def __init__(
+        self,
+        model_fn: Optional[Callable[[str], str]] = None,
+        weights: Optional[dict[str, float]] = None,
+        len_tau: float = 1.8,
+        len_lambda: float = 0.15,
+        tie_margin: float = 0.15,
+    ):
+        ...
+
+    def evaluate_single(
+        self,
+        prompt: str,
+        response: str,
+        golden_reference: str = "",
+        context: str = "",
+        required_keywords: Optional[list[str]] = None,
+    ) -> JudgeScore:
+        ...
+
+    def evaluate_pair(
+        self,
+        prompt: str,
+        response_a: str,
+        response_b: str,
+        golden_reference: str = "",
+        context: str = "",
+        required_keywords: Optional[list[str]] = None,
+    ) -> PairwiseJudgeResult:
+        ...
+
+    def evaluate_benchmark_case(
+        self,
+        case: GoldenTestCase,
+        candidate_response: str,
+        baseline_response: Optional[str] = None,
+    ) -> Union[JudgeScore, PairwiseJudgeResult]:
+        ...
+```
+
+---
+
+#### 4. Concrete Step-by-Step Implementation Sequence for Phase 4.3
+1. **Step 4.3.1**: Implement `evaluation/llm_judge.py` with `JudgeScore`, `PairwiseJudgeResult`, and `LLMJudge` implementing:
+   - CoT ChatML prompt templates for single-response and pairwise evaluation.
+   - Robust JSON and regex extractors for model-generated scoring rationales.
+   - Deterministic analytical fallback engine using Phase 4.2 `CitationVerifier` and lexical metrics.
+   - Exponential length penalty calculation.
+   - Symmetric two-pass position-swap debiasing and position inconsistency coefficient $\kappa_{\text{pos}}$.
+   - `evaluate_benchmark_case()` integration bridging Phase 4.1 `GoldenTestCase`.
+2. **Step 4.3.2**: Export `JudgeScore`, `PairwiseJudgeResult`, and `LLMJudge` in `evaluation/__init__.py`.
+3. **Step 4.3.3**: Implement `tests/test_m4_llm_judge.py` covering:
+   - Single-response evaluation with calibrated scoring across all 4 dimensions.
+   - Length penalty discounting on verbose vs. concise responses.
+   - Pairwise position-swap debiasing eliminating order effects.
+   - Deterministic heuristic engine evaluation accuracy on golden test cases.
+   - Mock LLM backend integration verifying CoT parsing and regex fallback handling.
+   - Direct evaluation of `GoldenTestCase` instances from Phase 4.1.
+4. **Step 4.3.4**: Integrate Phase 4.3 tests into master test runner `tests/run_all.py` and verify 100% test pass rate across all milestones (M0–M4).
+
+---
+
+### 8.11 Phase 4.4: Statistical Release Gating, Bootstrap Resampling, Hypothesis Testing, & Autonomous Rollback Orchestration
+
+#### 1. Theoretical Motivation & Foundations
+In Continual Learning and autonomous post-training systems, evaluating whether a new checkpoint $M_{\text{cand}}$ should be promoted to production over a verified baseline $M_{\text{base}}$ cannot rely on naive scalar point estimates (e.g. "mean score rose from 4.12 to 4.15"). Such point estimates suffer from severe statistical vulnerability:
+1. **Sample Variance & False Positives**: Small stochastic fluctuations across finite test cases ($N = 30$) can create spurious apparent gains that vanish under resampling.
+2. **Masked Catastrophic Forgetting**: A candidate model may achieve a higher overall mean score by improving on edge cases while experiencing silent, catastrophic forgetting on foundational ML theory or system design.
+3. **Non-Normal Paired Evaluation Distributions**: LLM Judge rubric scores and citation metrics are bounded, non-Gaussian, and often multimodal. Parametric tests ($t$-tests) violate fundamental assumptions and yield unreliable p-values.
+
+To achieve mathematically rigorous, zero-human-in-the-loop deployment safety, Phase 4.4 introduces a **Dual-Layer Statistical Release Gate and Autonomous Rollback Orchestrator**:
+- **Layer 1: Non-Parametric Paired Bootstrap Resampling ($B = 1000$)**:
+  Estimates empirical percentile confidence intervals $[CI_{\text{lower}}, CI_{\text{upper}}]$ on the paired performance delta $\Delta = S_{\text{cand}} - S_{\text{base}}$, computing the exact empirical probability of regression $p_{\text{boot\_regress}}$.
+- **Layer 2: Non-Parametric Paired Hypothesis Testing**:
+  - *Wilcoxon Signed-Rank Test*: Evaluates whether the median paired difference in continuous calibrated rubric scores is statistically significant without distributional assumptions.
+  - *Edwards Continuity-Corrected McNemar Discordance Test*: Evaluates whether the rate of candidate regressions ($M_{\text{base}}$ PASS, $M_{\text{cand}}$ FAIL) significantly exceeds improvements ($M_{\text{base}}$ FAIL, $M_{\text{cand}}$ PASS) on binary success criteria.
+- **Layer 3: Stratified Four-Bucket Gating Matrix**:
+  Enforces zero-tolerance gates on Core Domain and Regression Replay cases, preventing catastrophic forgetting before release.
+- **Layer 4: Autonomous Rollback & Hot-Swap Orchestrator**:
+  Maintains atomic production model pointers and golden anchor checkpoints. If gating detects significant regression or drift, it autonomously blocks promotion, executes immediate hot-swap rollback, and writes an incident audit record.
+
+---
+
+#### 2. Mathematical Formalization & Gating Equations
+
+```mermaid
+flowchart TD
+    subgraph Inputs ["Evaluation Inputs"]
+        Cases["30 Stratified Golden Test Cases"]
+        ScoresCand["Candidate Scores (S_cand)"]
+        ScoresBase["Baseline Scores (S_base)"]
+    end
+
+    subgraph StatAnalysis ["Layer 1 & 2: Statistical Inference Engine"]
+        Boot["Bootstrap Resampling (B=1000):<br/>CI_lower, CI_upper (95%), p_boot"]
+        Wilc["Wilcoxon Signed-Rank Test:<br/>Rank(|d_i|), z-stat, p_wilcoxon"]
+        McNem["Edwards McNemar Test:<br/>Discordant pairs (b, c), chi^2, p_mcnemar"]
+    end
+
+    subgraph StratGate ["Layer 3: Stratified Four-Bucket Gating"]
+        Core["Core Domain Gate:<br/>c_core == 0 (Zero-Tolerance)"]
+        Replay["Regression Replay Gate:<br/>c_regr == 0 (Zero-Tolerance)"]
+        Edge["Edge Case Gate:<br/>Delta >= -0.10"]
+        Adv["Adversarial Gate:<br/>Score >= 3.5 & No Hallucinations"]
+    end
+
+    subgraph GateDecisionEngine ["Release Gate Decision Matrix"]
+        DecCheck{"Evaluate Statistical &<br/>Bucket Conditions"}
+        Deploy["PROCEED_DEPLOY<br/>(Statistically Superior / Parity)"]
+        Block["BLOCK_RELEASE<br/>(Indeterminate / Minor Delta)"]
+        Rollback["TRIGGER_ROLLBACK<br/>(Statistically Significant Regression)"]
+        Alert["ALERT_DRIFT<br/>(High Variance / Wide CI / Inconsistency)"]
+    end
+
+    subgraph Orchestrator ["Layer 4: Rollback & Hot-Swap Orchestrator"]
+        Promote["Atomic Promotion:<br/>Update active_model_id -> cand<br/>Add to Replay Buffer"]
+        Restore["Atomic Rollback:<br/>Restore active_model_id -> golden_anchor<br/>Emit Incident Report"]
+    end
+
+    Inputs --> StatAnalysis
+    StatAnalysis --> StratGate
+    StratGate --> DecCheck
+    DecCheck -- "CI_lower > 0 & c_core == 0" --> Deploy
+    DecCheck -- "CI_upper < 0 OR c_core > 0" --> Rollback
+    DecCheck -- "CI_width > 0.80 OR kappa > 0.25" --> Alert
+    DecCheck -- "Otherwise" --> Block
+    Deploy --> Promote
+    Rollback --> Restore
+```
+
+##### (A) Non-Parametric Paired Bootstrap Resampling
+Given paired candidate and baseline evaluation scores $\mathcal{S} = \{(s_i, b_i)\}_{i=1}^N$:
+1. For bootstrap iteration $b = 1, \dots, B$ (where $B = 1000$):
+   Sample $N$ indices with replacement $\pi_b \sim \text{Uniform}(\{1, \dots, N\})$.
+   Compute the mean paired delta for replicate $b$:
+   $$\Delta^{*b} = \frac{1}{N} \sum_{i=1}^N \left( s_{\pi_b(i)} - b_{\pi_b(i)} \right)$$
+2. Sort the bootstrap replicates: $\Delta^{*(1)} \le \Delta^{*(2)} \le \dots \le \Delta^{*(B)}$.
+3. For significance level $\alpha = 0.05$ (95% two-sided confidence interval):
+   $$CI_{\text{lower}} = \Delta^{*(\lfloor B \cdot \frac{\alpha}{2} \rfloor)}, \quad CI_{\text{upper}} = \Delta^{*(\lceil B \cdot (1 - \frac{\alpha}{2}) \rceil)}$$
+4. Compute empirical one-tailed probability of regression ($H_0: \Delta \ge 0$ vs $H_1: \Delta < 0$):
+   $$p_{\text{boot\_regress}} = \frac{1}{B} \sum_{b=1}^B \mathbb{I}(\Delta^{*b} \le 0)$$
+
+##### (B) Wilcoxon Signed-Rank Test (Paired Continuous Rubrics)
+Let $d_i = s_i - b_i$ for $i = 1, \dots, N$.
+1. Exclude all pairs where $d_i = 0$, leaving $N_r \le N$ non-zero paired differences.
+2. Rank absolute differences $|d_i|$ in ascending order from $1$ to $N_r$, assigning average ranks to tied values.
+3. Compute the sum of positive and negative ranks:
+   $$W^+ = \sum_{d_i > 0} \text{rank}(|d_i|), \quad W^- = \sum_{d_i < 0} \text{rank}(|d_i|)$$
+4. The expected value $\mu_W$ and variance $\sigma_W^2$ under the null hypothesis of symmetric distribution around 0:
+   $$\mu_W = \frac{N_r(N_r + 1)}{4}$$
+   $$\sigma_W^2 = \frac{N_r(N_r + 1)(2N_r + 1) - \frac{1}{2} \sum_{j} (t_j^3 - t_j)}{24}$$
+   where $t_j$ is the number of tied ranks in tie group $j$.
+5. The continuity-corrected test statistic:
+   $$z = \frac{W^+ - \mu_W - 0.5 \cdot \text{sign}(W^+ - \mu_W)}{\sigma_W}$$
+6. Two-sided asymptotic p-value:
+   $$p_{\text{wilcoxon}} = 2 \cdot \left( 1 - \Phi(|z|) \right)$$
+
+##### (C) Edwards Continuity-Corrected McNemar Discordance Test
+For each test case $i$, define binary status:
+$$\text{Status}(y_i) = \begin{cases} \text{PASS} & \text{if } \mathcal{S}(y_i) \ge \tau_{\text{pass}} \text{ and } \text{Faithfulness}(y_i) \ge \tau_{\text{faith}} \\ \text{FAIL} & \text{otherwise} \end{cases}$$
+where default thresholds are $\tau_{\text{pass}} = 3.5$ and $\tau_{\text{faith}} = 0.80$.
+
+Construct the $2 \times 2$ paired contingency table:
+- $n_{11}$: Both Candidate and Baseline PASS
+- $b = n_{10}$: Candidate PASS, Baseline FAIL (Improvements)
+- $c = n_{01}$: Candidate FAIL, Baseline PASS (Regressions / Catastrophic Forgetting)
+- $n_{00}$: Both Candidate and Baseline FAIL
+
+Under null hypothesis $H_0: p_b = p_c$ (equal discordance rate), Edwards continuity-corrected McNemar statistic:
+$$\chi^2 = \begin{cases} \frac{(|b - c| - 1)^2}{b + c} & \text{if } b + c > 0 \\ 0.0 & \text{if } b + c = 0 \end{cases}$$
+The two-sided p-value is computed from the Chi-square distribution with 1 degree of freedom:
+$$p_{\text{mcnemar}} = 1 - F_{\chi^2_1}(\chi^2)$$
+We define the **Discordance Regression Ratio**:
+$$\mathcal{R}_{\text{regress}} = \frac{c}{\max(b + c, 1)}$$
+
+##### (D) Stratified Four-Bucket Gating Rules
+1. **Core Domain (12 Cases)**:
+   - Zero-Tolerance Criterion: $c_{\text{core}} = 0$ (zero regressions allowed).
+   - Minimum delta: $\bar{\Delta}_{\text{core}} \ge -0.05$.
+2. **Regression Replay (6 Cases)**:
+   - Anti-Forgetting Invariant: $c_{\text{regr}} = 0$ (must pass 100% of historical replay cases).
+3. **Edge Cases (6 Cases)**:
+   - Bounded Regression: $c_{\text{edge}} \le 1$, $\bar{\Delta}_{\text{edge}} \ge -0.15$.
+4. **Adversarial Bait (6 Cases)**:
+   - Hallucination Resistance: Mean score $\ge 3.5$, zero hallucinated citations.
+
+##### (E) Decision Matrix & Gate Classification
+The release gate assigns an autonomous verdict $\mathcal{D} \in \{\text{PROCEED\_DEPLOY}, \text{BLOCK\_RELEASE}, \text{TRIGGER\_ROLLBACK}, \text{ALERT\_DRIFT}\}$:
+$$\mathcal{D} = \begin{cases}
+\text{TRIGGER\_ROLLBACK} & \text{if } c_{\text{core}} > 0 \text{ or } c_{\text{regr}} > 0 \text{ or } (CI_{\text{upper}} < 0) \text{ or } (p_{\text{wilcoxon}} < 0.05 \text{ and } \bar{\Delta} < 0) \\
+\text{ALERT\_DRIFT} & \text{if } (CI_{\text{upper}} - CI_{\text{lower}} > 0.80) \text{ or } \kappa_{\text{pos}} > 0.25 \\
+\text{PROCEED\_DEPLOY} & \text{if } c_{\text{core}} = 0 \text{ and } c_{\text{regr}} = 0 \text{ and } (CI_{\text{lower}} > 0 \text{ or } (CI_{\text{lower}} \ge -0.05 \text{ and } \bar{\Delta} \ge 0.0)) \\
+\text{BLOCK\_RELEASE} & \text{otherwise}
+\end{cases}$$
+
+---
+
+#### 3. Core Architecture & Class Contracts
+
+```python
+class GateDecision(str, Enum):
+    PROCEED_DEPLOY = "PROCEED_DEPLOY"
+    BLOCK_RELEASE = "BLOCK_RELEASE"
+    TRIGGER_ROLLBACK = "TRIGGER_ROLLBACK"
+    ALERT_DRIFT = "ALERT_DRIFT"
+
+@dataclass
+class BootstrapMetricResult:
+    """Non-parametric paired bootstrap resampling metrics."""
+    mean_delta: float
+    ci_lower: float
+    ci_upper: float
+    ci_level: float = 0.95
+    p_value_regress: float = 0.0
+    num_replicates: int = 1000
+
+@dataclass
+class HypothesisTestResult:
+    """Paired non-parametric hypothesis test statistics."""
+    wilcoxon_stat: float
+    wilcoxon_p: float
+    mcnemar_stat: float
+    mcnemar_p: float
+    improvements: int    # b: Cand Pass, Base Fail
+    regressions: int     # c: Cand Fail, Base Pass
+    tied_passes: int     # Both Pass
+    tied_fails: int      # Both Fail
+    regression_ratio: float
+
+@dataclass
+class GateReport:
+    """Consolidated statistical release gating report and audit record."""
+    decision: GateDecision
+    overall_bootstrap: BootstrapMetricResult
+    overall_hypothesis: HypothesisTestResult
+    bucket_breakdown: dict[str, dict[str, Any]]
+    passed_checks: list[str]
+    violated_checks: list[str]
+    recommendation_summary: str
+    timestamp: str
+
+class StatisticalReleaseGate:
+    """Automated statistical gating engine comparing candidate vs baseline."""
+    def __init__(
+        self,
+        bootstrap_samples: int = 1000,
+        ci_level: float = 0.95,
+        alpha: float = 0.05,
+        parity_delta: float = 0.05,
+        pass_threshold: float = 3.5,
+    ):
+        ...
+
+    def evaluate_gate(
+        self,
+        suite: GoldenBenchmarkSuite,
+        candidate_scores: dict[str, float],
+        baseline_scores: dict[str, float],
+        judge_inconsistency: float = 0.0,
+    ) -> GateReport:
+        ...
+
+class RollbackOrchestrator:
+    """Autonomous checkpoint hot-swap and rollback orchestrator."""
+    def __init__(self, metadata_dir: Union[str, Path]):
+        ...
+
+    def get_active_model_id(self) -> str:
+        ...
+
+    def register_golden_anchor(self, model_id: str, checkpoint_path: str):
+        ...
+
+    def execute_gate_decision(
+        self,
+        report: GateReport,
+        candidate_model_id: str,
+        candidate_checkpoint_path: str,
+    ) -> dict[str, Any]:
+        """Atomically promotes candidate on PROCEED_DEPLOY, or rolls back on TRIGGER_ROLLBACK."""
+        ...
+```
+
+---
+
+#### 4. Concrete Step-by-Step Implementation Sequence for Phase 4.4
+1. **Step 4.4.1**: Implement `evaluation/statistical_gating.py` containing:
+   - `GateDecision`, `BootstrapMetricResult`, `HypothesisTestResult`, and `GateReport`.
+   - `compute_paired_bootstrap(cand, base, B=1000, ci=0.95)`.
+   - `compute_wilcoxon_signed_rank(cand, base)`.
+   - `compute_mcnemar_discordance(cand, base, tau=3.5)`.
+   - `StatisticalReleaseGate` executing stratified four-bucket gating and decision matrix.
+2. **Step 4.4.2**: Implement `evaluation/rollback_orchestrator.py` containing:
+   - Atomic state file persistence (`active_deployment.json`).
+   - `RollbackOrchestrator` managing atomic promotion, hot-swap rollback, and incident auditing.
+3. **Step 4.4.3**: Export all Phase 4.4 classes in `evaluation/__init__.py`.
+4. **Step 4.4.4**: Implement `tests/test_m4_statistical_gating.py` covering:
+   - Bootstrap resampling confidence interval calculation and empirical p-values.
+   - Wilcoxon signed-rank test for paired continuous rubric distributions.
+   - McNemar discordance test for paired binary pass/fail tables.
+   - Stratified four-bucket gating with zero-tolerance core domain regression.
+   - Release Gate decision classifications (`PROCEED_DEPLOY`, `BLOCK_RELEASE`, `TRIGGER_ROLLBACK`, `ALERT_DRIFT`).
+   - Autonomous Rollback Orchestrator atomic promotion, hot-swap rollback, and audit ledger persistence.
+5. **Step 4.4.5**: Integrate Phase 4.4 tests into master test runner `tests/run_all.py` and verify 100% test pass rate across all milestones (M0–M4), achieving complete Milestone 4 verification.
+
+
+
+
 
 
 
