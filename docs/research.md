@@ -578,7 +578,7 @@ where $k$ is retry count, $t_{\text{base}} = 1.5\text{s}$, and $t_{\max} = 15.0\
 Every extracted document records an immutable entry in `data/provenance_manifest.jsonl`:
 
 $$
-\text{SHA256} = \text{hashlib.sha256}(\text{clean\_text.encode('utf-8')}).\text{hexdigest}()
+\text{SHA256}(d) = \text{HexDigest}(\text{SHA-256}(\text{UTF8}(d)))
 $$
 
 $$
@@ -609,7 +609,7 @@ Demonstrated that language models can teach themselves to invoke search APIs in 
 3. The API call is retained in the training set **if and only if** conditioning on the search result strictly reduces the cross-entropy loss on predicting subsequent tokens:
 
 $$
-\mathcal{L}_{\text{with\_tool}} < \min\left(\mathcal{L}_{\text{without\_tool}}, \, \mathcal{L}_{\text{empty\_tool}}\right) - \tau
+\mathcal{L}_{\text{with-tool}} < \min\left(\mathcal{L}_{\text{no-tool}}, \, \mathcal{L}_{\text{empty-tool}}\right) - \tau
 $$
 
 #### 4. Self-RAG (Asai et al., 2023)
@@ -675,7 +675,7 @@ $$
    For factual/geospatial queries with known ground truth:
 
 $$
-r_{\text{acc}} = \mathbb{I}\left(\text{extract\_answer}(y) == y_{\text{truth}}\right)
+r_{\text{acc}} = \mathbb{I}\left(\text{ExtractAnswer}(y) = y_{\text{truth}}\right)
 $$
 
 2. **Citation Faithfulness / Entailment Reward ($r_{\text{cite}} \in [0, 1]$)**:
@@ -861,7 +861,7 @@ d^* = \arg\max_{d \in \mathcal{C}_k} \text{QualityScore}(d)
 $$
 
 $$
-\text{QualityScore}(d) = \ln(\text{length}(d)) \cdot (1 - R_{\text{line}}(d)) \cdot \text{stopword\_density}(d)
+\text{QualityScore}(d) = \ln(\text{length}(d)) \cdot (1 - R_{\text{line}}(d)) \cdot \text{StopwordDensity}(d)
 $$
 
 All other duplicate variants $\mathcal{C}_k \setminus \{d^*\}$ are discarded. This ensures zero redundant gradients during post-training while retaining the highest-fidelity version of each document.
@@ -1047,7 +1047,7 @@ h = h_0 + \Delta h = x W_0^T + \frac{\alpha}{r} \left( x A^T \right) B^T
 $$
 
 where:
-- $W_0 \in \mathbb{R}^{d_{\text{out}} \times d_{\text{in}}}$ is frozen ($\text{requires\_grad} = \text{False}$).
+- $W_0 \in \mathbb{R}^{d_{\text{out}} \times d_{\text{in}}}$ is frozen (with `requires_grad = False`).
 - $A \in \mathbb{R}^{r \times d_{\text{in}}}$ is initialized from a Gaussian distribution: $A_{ij} \sim \mathcal{N}\left(0, \sigma^2 = \frac{1}{r}\right)$ (or Kaiming uniform).
 - $B \in \mathbb{R}^{d_{\text{out}} \times r}$ is initialized strictly to zero: $B_{ij} = 0$.
 - $\gamma = \frac{\alpha}{r}$ is a fixed scalar multiplier.
@@ -1209,7 +1209,7 @@ Y_t = \begin{cases}
 $$
 
 $$
-\mathcal{L}_{\text{completion}} = \text{CrossEntropyLoss}(z, Y, \text{ignore\_index}=-100)
+\mathcal{L}_{\text{completion}} = \text{CrossEntropyLoss}(z, Y, \text{ignore}=-100)
 $$
 
 ##### Theorem 7.2 (Prompt Invariance under Completion Masking):
@@ -1504,10 +1504,10 @@ $$
 
 where $\mathcal{I}_{\text{prompt}}(\theta) > 0$.
 
-Under completion-only masked loss with target mask $M_t = \mathbb{I}(t \in \text{assistant\_span})$:
+Under completion-only masked loss with target mask $M_t = \mathbb{I}(t \in \text{assistant-span})$:
 
 $$
-\nabla_\theta \mathcal{L}_{\text{completion}}(\theta) = -\sum_{t \in \text{assistant\_span}} \nabla_\theta \ln P_\theta(x_t \mid x_{<t})
+\nabla_\theta \mathcal{L}_{\text{completion}}(\theta) = -\sum_{t \in \text{assistant-span}} \nabla_\theta \ln P_\theta(x_t \mid x_{<t})
 $$
 
 $$
@@ -1623,7 +1623,7 @@ class HarmonizedSFTDataset(torch.utils.data.Dataset):
 #### 6. Algorithmic Edge Cases Handled in Phase 3.1
 1. **Multi-Turn Assistant Loss**: In conversations with multiple user/assistant exchanges ($U_1 \to A_1 \to U_2 \to A_2$), every assistant utterance ($A_1, A_2$) must be actively trained, while every system/user utterance ($S, U_1, U_2$) and the delimiters themselves must be masked to `-100`.
 2. **Context Truncation Invariants**: When a sequence exceeds `max_seq_len`, truncating from the left could destroy the system prompt; truncating from the right could cut off the assistant answer mid-token. We enforce:
-   - Cap prompt length: Ensure at least $\min(64, \text{max\_seq\_len} // 2)$ tokens remain available for the assistant response.
+   - Cap prompt length: Ensure at least $\min(64, \lfloor T_{\max} / 2 \rfloor)$ tokens remain available for the assistant response.
    - If total length exceeds `max_seq_len`, right-truncate the assistant response while guaranteeing the final token is the EOS/`<|im_end|>` token.
 3. **Empty Assistant Response Guard**: If an example has no assistant text or is completely masked, the collator raises a validation warning and substitutes a fallback anchor sample to avoid `NaN` loss during cross-entropy calculation ($\frac{1}{\sum M_t} = \frac{1}{0}$).
 4. **Padding Alignment**: Batch tensors are padded to the longest sequence in the batch (capped at `max_seq_len`). All padded token slots receive target label `-100` and `attention_mask = 0`.
@@ -2169,8 +2169,8 @@ $$
 $$
 \text{GateDecision}(\mathcal{M}_{\text{adapted}}) = \begin{cases}
   \mathbf{PASS} & \text{if } \Delta \text{PPL}_{\text{domain}} > 0 \;\land\; \Delta \text{PPL}_{\text{anchor}} \le \tau_{\text{forget}} \\
-  \mathbf{FAIL\_FORGETTING} & \text{if } \Delta \text{PPL}_{\text{anchor}} > \tau_{\text{forget}} \\
-  \mathbf{FAIL\_NO\_LEARNING} & \text{if } \Delta \text{PPL}_{\text{domain}} \le 0
+  \mathbf{FAIL-FORGETTING} & \text{if } \Delta \text{PPL}_{\text{anchor}} > \tau_{\text{forget}} \\
+  \mathbf{FAIL-NO-LEARNING} & \text{if } \Delta \text{PPL}_{\text{domain}} \le 0
 \end{cases}
 $$
 
@@ -2501,7 +2501,7 @@ The release gate evaluates candidate checkpoint $\theta_{\text{cand}}$ against b
 
 $$
 \text{Decision}(\theta_{\text{cand}}) = \begin{cases}
-  \text{APPROVED} & \text{if } \mathcal{C}_{\text{forgetting}} \land \mathcal{C}_{\text{faithfulness}} \land \mathcal{C}_{\text{domain\_gain}} \land \mathcal{C}_{\text{statistical\_sig}} \\
+  \text{APPROVED} & \text{if } \mathcal{C}_{\text{forgetting}} \land \mathcal{C}_{\text{faithfulness}} \land \mathcal{C}_{	ext{domain-gain}} \land \mathcal{C}_{	ext{stat-sig}} \\
   \text{REJECTED} & \text{otherwise}
 \end{cases}
 $$
@@ -2524,13 +2524,13 @@ $$
 3. **Domain Competency Gain**:
 
 $$
-\mathcal{C}_{\text{domain\_gain}} \iff \bar{S}_{\text{domain}}(\theta_{\text{cand}}) - \bar{S}_{\text{domain}}(\theta_0) > 0.0
+\mathcal{C}_{\text{domain-gain}} \iff \bar{S}_{\text{domain}}(\theta_{\text{cand}}) - \bar{S}_{\text{domain}}(\theta_0) > 0.0
 $$
 
 4. **Statistical Significance Guard**:
 
 $$
-\mathcal{C}_{\text{statistical\_sig}} \iff \text{CI}_{0.95}^{\text{lower}}(\Delta \text{Score}) > -\delta_{\text{tol}} \land p_{\text{bootstrap}} < 0.05
+\mathcal{C}_{\text{stat-sig}} \iff \text{CI}_{0.95}^{\text{lower}}(\Delta \text{Score}) > -\delta_{\text{tol}} \land p_{\text{bootstrap}} < 0.05
 $$
 
 Upon `REJECTED`, the failure diagnosis records the offending violation mode:
@@ -3410,7 +3410,7 @@ In Continual Learning and autonomous post-training systems, evaluating whether a
 
 To achieve mathematically rigorous, zero-human-in-the-loop deployment safety, Phase 4.4 introduces a **Dual-Layer Statistical Release Gate and Autonomous Rollback Orchestrator**:
 - **Layer 1: Non-Parametric Paired Bootstrap Resampling ($B = 1000$)**:
-  Estimates empirical percentile confidence intervals $[CI_{\text{lower}}, CI_{\text{upper}}]$ on the paired performance delta $\Delta = S_{\text{cand}} - S_{\text{base}}$, computing the exact empirical probability of regression $p_{\text{boot\_regress}}$.
+  Estimates empirical percentile confidence intervals $[CI_{\text{lower}}, CI_{\text{upper}}]$ on the paired performance delta $\Delta = S_{\text{cand}} - S_{\text{base}}$, computing the exact empirical probability of regression $p_{\text{boot-regress}}$.
 - **Layer 2: Non-Parametric Paired Hypothesis Testing**:
   - *Wilcoxon Signed-Rank Test*: Evaluates whether the median paired difference in continuous calibrated rubric scores is statistically significant without distributional assumptions.
   - *Edwards Continuity-Corrected McNemar Discordance Test*: Evaluates whether the rate of candidate regressions ($M_{\text{base}}$ PASS, $M_{\text{cand}}$ FAIL) significantly exceeds improvements ($M_{\text{base}}$ FAIL, $M_{\text{cand}}$ PASS) on binary success criteria.
@@ -3488,7 +3488,7 @@ $$
 4. Compute empirical one-tailed probability of regression ($H_0: \Delta \ge 0$ vs $H_1: \Delta < 0$):
 
 $$
-p_{\text{boot\_regress}} = \frac{1}{B} \sum_{b=1}^B \mathbb{I}(\Delta^{*b} \le 0)
+p_{\text{boot-regress}} = \frac{1}{B} \sum_{b=1}^B \mathbb{I}(\Delta^{*b} \le 0)
 $$
 
 ##### (B) Wilcoxon Signed-Rank Test (Paired Continuous Rubrics)
@@ -3575,14 +3575,14 @@ $$
    - Hallucination Resistance: Mean score $\ge 3.5$, zero hallucinated citations.
 
 ##### (E) Decision Matrix & Gate Classification
-The release gate assigns an autonomous verdict $\mathcal{D} \in \{\text{PROCEED\_DEPLOY}, \text{BLOCK\_RELEASE}, \text{TRIGGER\_ROLLBACK}, \text{ALERT\_DRIFT}\}$:
+The release gate assigns an autonomous verdict $\mathcal{D} \in \{\text{PROCEED-DEPLOY}, \text{BLOCK-RELEASE}, \text{TRIGGER-ROLLBACK}, \text{ALERT-DRIFT}\}$:
 
 $$
 \mathcal{D} = \begin{cases}
-  \text{TRIGGER\_ROLLBACK} & \text{if } c_{\text{core}} > 0 \text{ or } c_{\text{regr}} > 0 \text{ or } (CI_{\text{upper}} < 0) \text{ or } (p_{\text{wilcoxon}} < 0.05 \text{ and } \bar{\Delta} < 0) \\
-  \text{ALERT\_DRIFT} & \text{if } (CI_{\text{upper}} - CI_{\text{lower}} > 0.80) \text{ or } \kappa_{\text{pos}} > 0.25 \\
-  \text{PROCEED\_DEPLOY} & \text{if } c_{\text{core}} = 0 \text{ and } c_{\text{regr}} = 0 \text{ and } (CI_{\text{lower}} > 0 \text{ or } (CI_{\text{lower}} \ge -0.05 \text{ and } \bar{\Delta} \ge 0.0)) \\
-  \text{BLOCK\_RELEASE} & \text{otherwise}
+  \text{TRIGGER-ROLLBACK} & \text{if } c_{\text{core}} > 0 \text{ or } c_{\text{regr}} > 0 \text{ or } (CI_{\text{upper}} < 0) \text{ or } (p_{\text{wilcoxon}} < 0.05 \text{ and } \bar{\Delta} < 0) \\
+  \text{ALERT-DRIFT} & \text{if } (CI_{\text{upper}} - CI_{\text{lower}} > 0.80) \text{ or } \kappa_{\text{pos}} > 0.25 \\
+  \text{PROCEED-DEPLOY} & \text{if } c_{\text{core}} = 0 \text{ and } c_{\text{regr}} = 0 \text{ and } (CI_{\text{lower}} > 0 \text{ or } (CI_{\text{lower}} \ge -0.05 \text{ and } \bar{\Delta} \ge 0.0)) \\
+  \text{BLOCK-RELEASE} & \text{otherwise}
 \end{cases}
 $$
 
@@ -4463,8 +4463,8 @@ tests/
    - `extract_completion_log_probs(model, input_ids, labels, attention_mask)`:
      - Vectorized forward pass through model logits.
      - Causal shift: Logits at index $t$ predict target token at index $t+1$.
-     - Cross-entropy log-softmax gathering: $\log P(y_t) = \text{log\_softmax}(\text{logits}_t)[\text{target}_t]$.
-     - Mask filtering: Only accumulate positions where $\text{labels} \neq -100$ and $\text{attention\_mask} == 1$.
+     - Cross-entropy log-softmax gathering: $\log P(y_t) = \text{LogSoftmax}(\text{logits}_t)[\text{target}_t]$.
+     - Mask filtering: Only accumulate positions where $\text{labels} \neq -100$ and `attention_mask == 1`.
      - Optional average length normalization for verbosity invariance.
 
 2. **Step 5.2.2: DPO Loss Formulations (`training/m5_preference/dpo_loss.py`)**:
@@ -5409,7 +5409,7 @@ When $N$ requests $\{q_1, \dots, q_N\}$ arrive within a debounce window $\Delta 
 Continual training never executes inline with the HTTP request. Instead, training is triggered if and only if:
 
 $$
-\text{Trigger} = \left( |\mathcal{D}_{\text{web\_new}}| \ge N_{\text{threshold}} \right) \lor \left( \Delta t \ge T_{\text{interval}} \right) \lor \left( \text{Drift}(\mathcal{D}_{\text{eval}}) > \tau_{\text{drift}} \right)
+\text{Trigger} = \left( |\mathcal{D}_{\text{web-new}}| \ge N_{\text{threshold}} \right) \lor \left( \Delta t \ge T_{\text{interval}} \right) \lor \left( \text{Drift}(\mathcal{D}_{\text{eval}}) > \tau_{\text{drift}} \right)
 $$
 
 where $N_{\text{threshold}} = 500$, $T_{\text{interval}} = 1\text{ hour}$, and $\tau_{\text{drift}} = 0.05$.

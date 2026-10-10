@@ -209,8 +209,8 @@ class TestM6Orchestrator(unittest.TestCase):
         self.assertEqual(orchestrator.training_cycles_completed, 1)
         self.assertIsNotNone(orchestrator.active_model)
 
-    def test_orchestrator_continual_learning_cycle_rollback(self):
-        """Verify continual training cycle issues TRIGGER_ROLLBACK when candidate outputs broken formatting."""
+    def test_orchestrator_continual_learning_cycle_candidate_rejection_and_active_rollback(self):
+        """Verify continual training cycle rejects degraded candidate without reverting active model, and test active rollback."""
         orchestrator = ContinualLearningOrchestrator()
         orchestrator.model_version = 2
         orchestrator.replay_buffer.add_anchor_data(["A stable anchor example for the baseline model."])
@@ -226,9 +226,15 @@ class TestM6Orchestrator(unittest.TestCase):
             train_fn=lambda model, batch: object(),
         )
 
-        self.assertEqual(report["status"], "ROLLED_BACK")
+        # Candidate rejected before deployment; active model remains version 2!
+        self.assertEqual(report["status"], "REJECTED")
         self.assertEqual(report["decision"], GateDecision.TRIGGER_ROLLBACK.value)
-        self.assertEqual(orchestrator.model_version, 0)  # Reverted to anchor!
+        self.assertEqual(orchestrator.model_version, 2)
+
+        # Now test active model rollback
+        rollback_res = orchestrator.rollback_to_anchor(reason="Post-deployment degradation")
+        self.assertEqual(rollback_res["status"], "ROLLED_BACK")
+        self.assertEqual(orchestrator.model_version, 0)
 
     def test_orchestrator_does_not_promote_without_training_callback(self):
         orchestrator = ContinualLearningOrchestrator(training_trigger_threshold=1)

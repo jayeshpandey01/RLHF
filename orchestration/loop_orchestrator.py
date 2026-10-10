@@ -438,16 +438,15 @@ class ContinualLearningOrchestrator:
             logger.info(f"ContinualLearningOrchestrator: PROCEED_DEPLOY -> Model atomically hot-swapped to V{self.model_version}")
             status = "PROMOTED"
 
-        elif decision == GateDecision.TRIGGER_ROLLBACK.value:
-            with self._model_lock:
-                self.active_model = self.anchor_model
-                self.model_version = 0  # Reverted to anchor
-            logger.warning("ContinualLearningOrchestrator: TRIGGER_ROLLBACK -> Reverted to golden anchor baseline!")
-            status = "ROLLED_BACK"
-
+        elif decision in (GateDecision.TRIGGER_ROLLBACK.value, GateDecision.BLOCK_RELEASE.value):
+            # Candidate failed pre-deployment gating; reject candidate and retain active model untouched
+            logger.info(
+                f"ContinualLearningOrchestrator: {decision} -> Candidate rejected; retaining current active model V{self.model_version}."
+            )
+            status = "REJECTED"
         else:
-            # BLOCK_RELEASE: Retain current active model
-            logger.info("ContinualLearningOrchestrator: BLOCK_RELEASE -> Candidate rejected; retaining current active model.")
+            # ALERT_DRIFT or unknown: retain current active model
+            logger.info(f"ContinualLearningOrchestrator: {decision} -> Holding candidate; retaining current active model.")
             status = "REJECTED"
 
         return {
@@ -475,4 +474,17 @@ class ContinualLearningOrchestrator:
             "event_queue": self.event_queue.get_stats(),
             "replay_buffer": self.replay_buffer.get_stats(),
             "retriever_documents": len(self.retriever),
+        }
+
+    def rollback_to_anchor(self, reason: str = "Active model rollback triggered") -> Dict[str, Any]:
+        """Atomically restore active production model to golden anchor baseline."""
+        with self._model_lock:
+            self.active_model = self.anchor_model
+            self.model_version = 0
+        self.semantic_cache.clear()
+        logger.warning(f"ContinualLearningOrchestrator: Active model rolled back to anchor. Reason: {reason}")
+        return {
+            "status": "ROLLED_BACK",
+            "model_version": 0,
+            "reason": reason,
         }

@@ -84,40 +84,145 @@ class TestM4StatisticalGating(unittest.TestCase):
         self.assertGreater(report.overall_bootstrap.ci_lower, 0.0)
         self.assertEqual(report.bucket_breakdown["core_domain"]["regressions"], 0)
         self.assertEqual(report.bucket_breakdown["regression_replay"]["regressions"], 0)
-        self.assertIn("Core Domain Zero-Regression Invariant: PASSED", report.passed_checks[0])
+        self.assertTrue(any("Core Domain Zero-Regression Invariant: PASSED" in c for c in report.passed_checks))
 
-    def test_gate_trigger_rollback_on_core_domain_regression(self):
-        """Verify single core domain regression immediately triggers TRIGGER_ROLLBACK."""
-        # Candidate is higher on 29 cases, but catastrophically regresses on core_ml_001
+    def test_gate_candidate_regression_blocks_release(self):
+        """Verify candidate regression before deployment yields BLOCK_RELEASE, preserving active model."""
         base_scores = {c.case_id: 3.8 for c in self.suite.cases}
         cand_scores = {c.case_id: 4.5 for c in self.suite.cases}
-        cand_scores["core_ml_001"] = 2.0  # Core domain regression (was 3.8, now 2.0)
+        cand_scores["core_ml_001"] = 2.0  # Core domain regression
+
+        # Default is_active_deployment=False (candidate evaluation)
+        report = self.gate.evaluate_gate(
+            suite=self.suite,
+            candidate_scores=cand_scores,
+            baseline_scores=base_scores,
+            is_active_deployment=False,
+        )
+
+        self.assertEqual(report.decision, GateDecision.BLOCK_RELEASE)
+        self.assertGreater(report.bucket_breakdown["core_domain"]["regressions"], 0)
+        self.assertTrue(any("Core Domain Zero-Regression Invariant: FAILED" in v for v in report.violated_checks))
+        self.assertIn("Release BLOCKED", report.recommendation_summary)
+
+    def test_gate_active_deployment_regression_triggers_rollback(self):
+        """Verify active production deployment regression yields TRIGGER_ROLLBACK."""
+        base_scores = {c.case_id: 3.8 for c in self.suite.cases}
+        cand_scores = {c.case_id: 4.5 for c in self.suite.cases}
+        cand_scores["core_ml_001"] = 2.0
 
         report = self.gate.evaluate_gate(
             suite=self.suite,
             candidate_scores=cand_scores,
             baseline_scores=base_scores,
+            is_active_deployment=True,
         )
 
         self.assertEqual(report.decision, GateDecision.TRIGGER_ROLLBACK)
         self.assertGreater(report.bucket_breakdown["core_domain"]["regressions"], 0)
-        self.assertTrue(any("Core Domain Zero-Regression Invariant: FAILED" in v for v in report.violated_checks))
+        self.assertIn("TRIGGER_ROLLBACK", report.recommendation_summary)
 
-    def test_gate_trigger_rollback_on_replay_buffer_regression(self):
-        """Verify regression on historical replay case triggers TRIGGER_ROLLBACK."""
-        base_scores = {c.case_id: 4.0 for c in self.suite.cases}
+    def test_gate_rejects_missing_candidate_scores(self):
+        """Verify candidate scores missing test cases fail closed with BLOCK_RELEASE without synthesizing 0.0."""
+        base_scores = {c.case_id: 3.8 for c in self.suite.cases}
         cand_scores = {c.case_id: 4.5 for c in self.suite.cases}
-        cand_scores["regr_trunc_loss_025"] = 2.2  # Replay regression
+        del cand_scores["core_ml_001"]  # Missing score
 
         report = self.gate.evaluate_gate(
             suite=self.suite,
             candidate_scores=cand_scores,
             baseline_scores=base_scores,
         )
+        self.assertEqual(report.decision, GateDecision.BLOCK_RELEASE)
+        self.assertTrue(any("Missing candidate evaluation scores" in v for v in report.violated_checks))
 
-        self.assertEqual(report.decision, GateDecision.TRIGGER_ROLLBACK)
-        self.assertGreater(report.bucket_breakdown["regression_replay"]["regressions"], 0)
-        self.assertTrue(any("Regression Replay Buffer Retention: FAILED" in v for v in report.violated_checks))
+    def test_gate_rejects_missing_baseline_scores(self):
+        """Verify baseline scores missing test cases fail closed with BLOCK_RELEASE without synthesizing 1.0."""
+        base_scores = {c.case_id: 3.8 for c in self.suite.cases}
+        cand_scores = {c.case_id: 4.5 for c in self.suite.cases}
+        del base_scores["core_ml_001"]
+
+        report = self.gate.evaluate_gate(
+            suite=self.suite,
+            candidate_scores=cand_scores,
+            baseline_scores=base_scores,
+        )
+        self.assertEqual(report.decision, GateDecision.BLOCK_RELEASE)
+        self.assertTrue(any("Missing baseline evaluation scores" in v for v in report.violated_checks))
+
+    def test_gate_rejects_invalid_or_out_of_range_scores(self):
+        """Verify non-finite or out-of-range scores fail closed."""
+        base_scores = {c.case_id: 3.8 for c in self.suite.cases}
+        cand_scores = {c.case_id: 4.5 for c in self.suite.cases}
+        cand_scores["core_ml_001"] = float("nan")
+
+        report = self.gate.evaluate_gate(
+            suite=self.suite,
+            candidate_scores=cand_scores,
+            baseline_scores=base_scores,
+        )
+        self.assertEqual(report.decision, GateDecision.BLOCK_RELEASE)
+        self.assertTrue(any("Invalid non-finite or out-of-range" in v for v in report.violated_checks))
+
+    def test_gate_rejects_unknown_extra_case_ids(self):
+        """Verify unexpected unknown case IDs fail closed."""
+        base_scores = {c.case_id: 3.8 for c in self.suite.cases}
+        cand_scores = {c.case_id: 4.5 for c in self.suite.cases}
+        cand_scores["unknown_bogus_case_999"] = 4.0
+
+        report = self.gate.evaluate_gate(
+            suite=self.suite,
+            candidate_scores=cand_scores,
+            baseline_scores=base_scores,
+        )
+        self.assertEqual(report.decision, GateDecision.BLOCK_RELEASE)
+        self.assertTrue(any("Unknown candidate case IDs" in v for v in report.violated_checks))
+
+    def test_gate_blocks_release_when_bucket_is_missing(self):
+        """Verify missing regression_replay bucket fails closed and cannot approve release."""
+        # Create a partial suite with NO regression_replay cases
+        non_replay_cases = [c for c in self.suite.cases if c.bucket != "regression_replay"]
+        partial_suite = GoldenBenchmarkSuite(non_replay_cases)
+
+        base_scores = {c.case_id: 3.8 for c in partial_suite.cases}
+        cand_scores = {c.case_id: 4.6 for c in partial_suite.cases}  # High scores!
+
+        report = self.gate.evaluate_gate(
+            suite=partial_suite,
+            candidate_scores=cand_scores,
+            baseline_scores=base_scores,
+        )
+        self.assertEqual(report.decision, GateDecision.BLOCK_RELEASE)
+        self.assertTrue(any("regression_replay" in v for v in report.violated_checks))
+
+    def test_gate_blocks_no_op_candidate(self):
+        """Verify candidate with exact parity / no-op (mean_delta == 0.0) is blocked by positive margin."""
+        base_scores = {c.case_id: 4.0 for c in self.suite.cases}
+        cand_scores = {c.case_id: 4.0 for c in self.suite.cases}  # Exact tie
+
+        report = self.gate.evaluate_gate(
+            suite=self.suite,
+            candidate_scores=cand_scores,
+            baseline_scores=base_scores,
+        )
+        self.assertEqual(report.decision, GateDecision.BLOCK_RELEASE)
+        self.assertAlmostEqual(report.overall_bootstrap.mean_delta, 0.0, places=4)
+        self.assertIn("below required improvement margin", report.recommendation_summary)
+
+    def test_gate_power_analysis_computation(self):
+        """Verify power analysis metrics are computed and included in GateReport."""
+        base_scores = {c.case_id: 3.8 for c in self.suite.cases}
+        cand_scores = {c.case_id: 4.6 for c in self.suite.cases}
+
+        report = self.gate.evaluate_gate(
+            suite=self.suite,
+            candidate_scores=cand_scores,
+            baseline_scores=base_scores,
+        )
+        self.assertIsNotNone(report.power_analysis)
+        self.assertIn("power", report.power_analysis)
+        self.assertIn("mde", report.power_analysis)
+        self.assertEqual(report.power_analysis["sample_size"], len(self.suite.cases))
 
     def test_gate_alert_drift_on_wide_ci_or_judge_inconsistency(self):
         """Verify evaluation volatility flags ALERT_DRIFT."""
@@ -154,7 +259,7 @@ class TestM4StatisticalGating(unittest.TestCase):
         self.assertGreater(report.overall_hypothesis.wilcoxon_p, 0.05)
 
     def test_rollback_orchestrator_lifecycle(self):
-        """Verify RollbackOrchestrator atomic promotion, hot-swap rollback, and persistence."""
+        """Verify RollbackOrchestrator atomic promotion, candidate rejection, and hot-swap rollback."""
         orch = RollbackOrchestrator(metadata_dir=self.temp_dir)
         self.assertEqual(orch.state.active_model_id, "baseline_v0")
 
@@ -180,7 +285,8 @@ class TestM4StatisticalGating(unittest.TestCase):
         self.assertEqual(orch.state.active_model_id, "cand_model_v2")
         self.assertEqual(orch.state.active_checkpoint_path, cand_path)
 
-        # 3. Simulate TRIGGER_ROLLBACK on a regressed candidate
+        # 3. Simulate pre-release candidate regression on an unpromoted candidate
+        # Active model must NOT roll back because cand_model_v3_bad was never deployed!
         regressed_path = f"{self.temp_dir}/models/checkpoint_step200.pt"
         report_rollback = GateReport(
             decision=GateDecision.TRIGGER_ROLLBACK,
@@ -193,15 +299,21 @@ class TestM4StatisticalGating(unittest.TestCase):
             recommendation_summary="Core domain forgetting detected",
         )
         orch.execute_gate_decision(report_rollback, "cand_model_v3_bad", regressed_path)
-        # Active model must have rolled back to golden anchor!
+        # Active model remains cand_model_v2 untouched!
+        self.assertEqual(orch.state.active_model_id, "cand_model_v2")
+        self.assertEqual(orch.state.active_checkpoint_path, cand_path)
+
+        # 4. Now simulate regression on the ACTIVE model (cand_model_v2)
+        orch.execute_gate_decision(report_rollback, "cand_model_v2", cand_path)
+        # Active model must now roll back to golden anchor!
         self.assertEqual(orch.state.active_model_id, "golden_anchor_v1")
         self.assertEqual(orch.state.active_checkpoint_path, anchor_path)
         self.assertEqual(orch.state.last_action, "ROLLED_BACK")
 
-        # 4. Persistence roundtrip check with a new orchestrator instance
+        # 5. Persistence roundtrip check with a new orchestrator instance
         orch_reloaded = RollbackOrchestrator(metadata_dir=self.temp_dir)
         self.assertEqual(orch_reloaded.state.active_model_id, "golden_anchor_v1")
-        self.assertEqual(len(orch_reloaded.state.history), 3)
+        self.assertEqual(len(orch_reloaded.state.history), 4)
 
 
 if __name__ == "__main__":

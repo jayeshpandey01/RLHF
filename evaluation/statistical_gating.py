@@ -93,6 +93,7 @@ class GateReport:
     overall_bootstrap: BootstrapMetricResult
     overall_hypothesis: HypothesisTestResult
     bucket_breakdown: dict[str, dict[str, Any]]
+    power_analysis: Optional[dict[str, Any]] = None
     passed_checks: list[str] = field(default_factory=list)
     violated_checks: list[str] = field(default_factory=list)
     recommendation_summary: str = ""
@@ -107,11 +108,66 @@ class GateReport:
             "overall_bootstrap": self.overall_bootstrap.to_dict(),
             "overall_hypothesis": self.overall_hypothesis.to_dict(),
             "bucket_breakdown": self.bucket_breakdown,
+            "power_analysis": self.power_analysis,
             "passed_checks": self.passed_checks,
             "violated_checks": self.violated_checks,
             "recommendation_summary": self.recommendation_summary,
             "timestamp": self.timestamp,
         }
+
+
+def compute_statistical_power(
+    cand_scores: list[float],
+    base_scores: list[float],
+    target_delta: float = 0.05,
+    alpha: float = 0.05,
+) -> dict[str, Any]:
+    """Compute sensitivity and statistical power for paired continuous rubric distributions.
+
+    Calculates post-hoc power and minimum detectable effect (MDE) at 80% power (beta=0.20)
+    for sample size n, verifying whether benchmark size is adequate to resolve target_delta.
+    """
+    n = len(cand_scores)
+    if n < 2:
+        return {
+            "power": 0.0,
+            "mde": float("inf"),
+            "sample_size": n,
+            "adequate_power": False,
+            "target_delta": target_delta,
+            "warning": "Sample size too small (<2) for power estimation.",
+        }
+
+    deltas = [c - b for c, b in zip(cand_scores, base_scores)]
+    mean_delta = sum(deltas) / n
+    var = sum((d - mean_delta) ** 2 for d in deltas) / (n - 1)
+    std_delta = math.sqrt(var)
+    se = std_delta / math.sqrt(n)
+
+    z_alpha = float(stats.norm.ppf(1.0 - alpha / 2.0))
+    if se > 1e-9:
+        z_beta = (abs(target_delta) / se) - z_alpha
+        power = float(stats.norm.cdf(z_beta))
+        mde = float((z_alpha + 0.8416) * se)
+    else:
+        power = 1.0
+        mde = 0.0
+
+    adequate = power >= 0.80 and n >= 30
+    warning = ""
+    if n < 30:
+        warning = f"Benchmark sample size ({n} cases) has limited statistical power. Recommendations require caution."
+    elif not adequate:
+        warning = f"Estimated statistical power ({power:.2%}) is below 80% threshold for detecting delta={target_delta}."
+
+    return {
+        "power": round(power, 4),
+        "mde": round(mde, 4),
+        "sample_size": n,
+        "adequate_power": adequate,
+        "target_delta": target_delta,
+        "warning": warning,
+    }
 
 
 def compute_paired_bootstrap(
@@ -254,7 +310,7 @@ class StatisticalReleaseGate:
         pass_threshold: float = 3.5,
         random_seed: int = 42,
         edge_case_delta_threshold: float = -0.15,
-        min_improvement_delta: float = 0.0,
+        min_improvement_delta: float = 0.02,
     ):
         """Initialize the Statistical Release Gate.
 
@@ -266,7 +322,7 @@ class StatisticalReleaseGate:
             pass_threshold: Minimum rubric score considered a successful pass (default 3.5).
             random_seed: Deterministic seed for bootstrap resampling.
             edge_case_delta_threshold: Minimum allowed mean delta for edge cases (default -0.15).
-            min_improvement_delta: Minimum overall mean delta required for parity promotion (default 0.0).
+            min_improvement_delta: Calibrated minimum positive mean delta required for parity promotion (default 0.02).
         """
         self.bootstrap_samples = int(bootstrap_samples)
         self.ci_level = float(ci_level)
@@ -283,6 +339,7 @@ class StatisticalReleaseGate:
         candidate_scores: dict[str, float],
         baseline_scores: dict[str, float],
         judge_inconsistency: float = 0.0,
+        is_active_deployment: bool = False,
     ) -> GateReport:
         """Execute full stratified statistical gating evaluation.
 
@@ -291,6 +348,9 @@ class StatisticalReleaseGate:
             candidate_scores: Mapping from case_id to candidate score.
             baseline_scores: Mapping from case_id to baseline score.
             judge_inconsistency: Kappa position inconsistency from LLMJudge (default 0.0).
+            is_active_deployment: Whether evaluation targets the currently active deployment
+                (True -> triggers TRIGGER_ROLLBACK on regression) or an unreleased candidate
+                (False -> triggers BLOCK_RELEASE on regression, preserving active model).
 
         Returns:
             GateReport with definitive release decision and audit breakdown.
@@ -298,9 +358,9 @@ class StatisticalReleaseGate:
         passed_checks: list[str] = []
         violated_checks: list[str] = []
 
-        # Fail closed immediately if candidate scores are empty
-        if not candidate_scores:
-            violated_checks.append("Candidate evaluation score matrix is empty. Candidate failed inference.")
+        all_cases = suite.cases
+        if not all_cases:
+            violated_checks.append("Evaluation benchmark suite contains 0 test cases.")
             overall_boot = compute_paired_bootstrap([0.0], [4.0], num_replicates=10, seed=self.random_seed)
             overall_hypo = HypothesisTestResult(0.0, 1.0, 0.0, 1.0, 0, 1, 0, 0, 1.0)
             return GateReport(
@@ -308,23 +368,64 @@ class StatisticalReleaseGate:
                 overall_bootstrap=overall_boot,
                 overall_hypothesis=overall_hypo,
                 bucket_breakdown={},
+                power_analysis={"power": 0.0, "adequate_power": False, "sample_size": 0},
                 passed_checks=[],
                 violated_checks=violated_checks,
-                recommendation_summary="Release BLOCKED: Candidate evaluation scores are missing or empty.",
+                recommendation_summary="Release BLOCKED: Evaluation suite has no test cases.",
             )
 
-        # 1. Align score vectors across all cases in the suite
-        all_cases = suite.cases
+        # 1. Strict score validation: fail-closed on missing, malformed, or out-of-range scores
+        suite_case_ids = {c.case_id for c in all_cases}
+        missing_cand = [cid for cid in suite_case_ids if cid not in candidate_scores]
+        missing_base = [cid for cid in suite_case_ids if cid not in baseline_scores]
+        extra_cand = [cid for cid in candidate_scores if cid not in suite_case_ids]
+        extra_base = [cid for cid in baseline_scores if cid not in suite_case_ids]
+
+        invalid_cand = [
+            cid for cid, s in candidate_scores.items()
+            if not isinstance(s, (int, float)) or not math.isfinite(s) or s < 0.0 or s > 5.0
+        ]
+        invalid_base = [
+            cid for cid, s in baseline_scores.items()
+            if not isinstance(s, (int, float)) or not math.isfinite(s) or s < 0.0 or s > 5.0
+        ]
+
+        if missing_cand or missing_base or extra_cand or extra_base or invalid_cand or invalid_base:
+            if missing_cand:
+                violated_checks.append(f"Missing candidate evaluation scores for cases: {missing_cand}")
+            if missing_base:
+                violated_checks.append(f"Missing baseline evaluation scores for cases: {missing_base}")
+            if extra_cand:
+                violated_checks.append(f"Unknown candidate case IDs not in benchmark suite: {extra_cand}")
+            if extra_base:
+                violated_checks.append(f"Unknown baseline case IDs not in benchmark suite: {extra_base}")
+            if invalid_cand:
+                violated_checks.append(f"Invalid non-finite or out-of-range candidate scores for cases: {invalid_cand}")
+            if invalid_base:
+                violated_checks.append(f"Invalid non-finite or out-of-range baseline scores for cases: {invalid_base}")
+
+            overall_boot = compute_paired_bootstrap([0.0], [4.0], num_replicates=10, seed=self.random_seed)
+            overall_hypo = HypothesisTestResult(0.0, 1.0, 0.0, 1.0, 0, 1, 0, 0, 1.0)
+            return GateReport(
+                decision=GateDecision.BLOCK_RELEASE,
+                overall_bootstrap=overall_boot,
+                overall_hypothesis=overall_hypo,
+                bucket_breakdown={},
+                power_analysis={"power": 0.0, "adequate_power": False, "sample_size": len(candidate_scores)},
+                passed_checks=[],
+                violated_checks=violated_checks,
+                recommendation_summary="Release BLOCKED: Score validation failed. Missing, malformed, or out-of-range scores.",
+            )
+
+        # 2. Align score vectors across all cases in the suite
         cand_list: list[float] = []
         base_list: list[float] = []
         case_records: list[dict[str, Any]] = []
 
         for c in all_cases:
             cid = c.case_id
-            if cid not in candidate_scores:
-                violated_checks.append(f"Missing evaluation score for case {cid} - marked as 0.0")
-            s_cand = candidate_scores.get(cid, 0.0)
-            s_base = baseline_scores.get(cid, 1.0)
+            s_cand = float(candidate_scores[cid])
+            s_base = float(baseline_scores[cid])
             cand_list.append(s_cand)
             base_list.append(s_base)
             case_records.append({
@@ -336,7 +437,7 @@ class StatisticalReleaseGate:
                 "delta": s_cand - s_base,
             })
 
-        # 2. Overall Statistical Inference
+        # 3. Overall Statistical Inference & Power Analysis
         overall_boot = compute_paired_bootstrap(
             cand_list,
             base_list,
@@ -361,13 +462,28 @@ class StatisticalReleaseGate:
             regression_ratio=r_ratio,
         )
 
-        # 3. Stratified Bucket Breakdown
-        buckets = ["core_domain", "edge_case", "adversarial_bait", "regression_replay"]
-        bucket_breakdown: dict[str, dict[str, Any]] = {}
+        power_metrics = compute_statistical_power(
+            cand_list,
+            base_list,
+            target_delta=self.min_improvement_delta,
+            alpha=self.alpha,
+        )
+        if power_metrics.get("warning"):
+            violated_checks.append(f"Statistical Sensitivity Warning: {power_metrics['warning']}")
+        else:
+            passed_checks.append(
+                f"Statistical Sensitivity: Adequate power ({power_metrics['power']:.1%}) for delta={self.min_improvement_delta}."
+            )
 
-        for b_name in buckets:
+        # 4. Stratified Bucket Breakdown & Validation
+        required_buckets = ["core_domain", "edge_case", "adversarial_bait", "regression_replay"]
+        bucket_breakdown: dict[str, dict[str, Any]] = {}
+        missing_buckets: list[str] = []
+
+        for b_name in required_buckets:
             b_cases = [rec for rec in case_records if rec["bucket"] == b_name]
             if not b_cases:
+                missing_buckets.append(b_name)
                 violated_checks.append(f"Bucket '{b_name}' has 0 test cases in evaluation suite!")
                 continue
             b_cand = [r["score_cand"] for r in b_cases]
@@ -388,18 +504,29 @@ class StatisticalReleaseGate:
                 "regressions": b_reg,
             }
 
-        # 4. Check Specific Gating Criteria
-        core_reg = bucket_breakdown.get("core_domain", {}).get("regressions", 0)
-        regr_reg = bucket_breakdown.get("regression_replay", {}).get("regressions", 0)
-        core_delta = bucket_breakdown.get("core_domain", {}).get("mean_delta", 0.0)
-        edge_delta = bucket_breakdown.get("edge_case", {}).get("mean_delta", 0.0)
-        adv_cases = [c for c in all_cases if c.bucket == "adversarial_bait"]
-        if "adversarial_bait" in bucket_breakdown:
-            adv_mean = bucket_breakdown["adversarial_bait"]["mean_candidate"]
-        elif adv_cases:
-            adv_mean = 0.0
-        else:
-            adv_mean = self.pass_threshold
+        # Any missing required bucket immediately blocks release
+        if missing_buckets:
+            summary = (
+                f"Release BLOCKED: Benchmark suite missing required bucket(s): {missing_buckets}. "
+                f"Stratified gating requires all 4 buckets."
+            )
+            return GateReport(
+                decision=GateDecision.BLOCK_RELEASE,
+                overall_bootstrap=overall_boot,
+                overall_hypothesis=overall_hypo,
+                bucket_breakdown=bucket_breakdown,
+                power_analysis=power_metrics,
+                passed_checks=passed_checks,
+                violated_checks=violated_checks,
+                recommendation_summary=summary,
+            )
+
+        # 5. Check Specific Gating Criteria
+        core_reg = bucket_breakdown["core_domain"]["regressions"]
+        regr_reg = bucket_breakdown["regression_replay"]["regressions"]
+        core_delta = bucket_breakdown["core_domain"]["mean_delta"]
+        edge_delta = bucket_breakdown["edge_case"]["mean_delta"]
+        adv_mean = bucket_breakdown["adversarial_bait"]["mean_candidate"]
 
         # Criterion 1: Zero-tolerance on core domain regressions
         if core_reg == 0:
@@ -449,7 +576,7 @@ class StatisticalReleaseGate:
                 f"[{overall_boot.ci_lower:+.3f}, {overall_boot.ci_upper:+.3f}] (Parity/Neutral)."
             )
 
-        # 5. Autonomous Gating Decision Matrix
+        # 6. Autonomous Gating Decision Matrix
         is_stat_sig_regress = (
             overall_boot.ci_upper < 0.0
             or (overall_hypo.wilcoxon_p < self.alpha and overall_boot.mean_delta < 0.0)
@@ -461,16 +588,24 @@ class StatisticalReleaseGate:
             or core_delta < -self.parity_delta
             or edge_delta < self.edge_case_delta_threshold
         )
-        has_core_domain = "core_domain" in bucket_breakdown
 
         if is_core_or_regr_violation or is_stat_sig_regress:
-            decision = GateDecision.TRIGGER_ROLLBACK
-            summary = (
-                f"Release BLOCKED with TRIGGER_ROLLBACK. Core regressions: {core_reg}, "
-                f"Replay regressions: {regr_reg}, Edge delta: {edge_delta:+.3f}, "
-                f"Mean Delta: {overall_boot.mean_delta:+.3f}, "
-                f"95% CI: [{overall_boot.ci_lower:+.3f}, {overall_boot.ci_upper:+.3f}]."
-            )
+            if is_active_deployment:
+                decision = GateDecision.TRIGGER_ROLLBACK
+                summary = (
+                    f"ACTIVE DEPLOYMENT REGRESSION: TRIGGER_ROLLBACK. Core regressions: {core_reg}, "
+                    f"Replay regressions: {regr_reg}, Edge delta: {edge_delta:+.3f}, "
+                    f"Mean Delta: {overall_boot.mean_delta:+.3f}, "
+                    f"95% CI: [{overall_boot.ci_lower:+.3f}, {overall_boot.ci_upper:+.3f}]."
+                )
+            else:
+                decision = GateDecision.BLOCK_RELEASE
+                summary = (
+                    f"Release BLOCKED: Candidate exhibited regression or forgetting before deployment. "
+                    f"Core regressions: {core_reg}, Replay regressions: {regr_reg}, "
+                    f"Edge delta: {edge_delta:+.3f}, Mean Delta: {overall_boot.mean_delta:+.3f}, "
+                    f"95% CI: [{overall_boot.ci_lower:+.3f}, {overall_boot.ci_upper:+.3f}]."
+                )
         elif ci_width > 0.80 or judge_inconsistency > 0.25:
             decision = GateDecision.ALERT_DRIFT
             summary = (
@@ -478,27 +613,29 @@ class StatisticalReleaseGate:
                 f"high judge inconsistency (kappa={judge_inconsistency:.3f} > 0.25). Hold release for audit."
             )
         elif (
-            has_core_domain
-            and core_reg == 0
+            core_reg == 0
             and regr_reg == 0
             and adv_mean >= self.pass_threshold
             and edge_delta >= self.edge_case_delta_threshold
             and (
                 overall_boot.ci_lower > 0.0  # Statistically superior
-                or (overall_boot.ci_lower >= -self.parity_delta and overall_boot.mean_delta >= self.min_improvement_delta)  # Non-inferior parity
+                or (
+                    overall_boot.ci_lower >= -self.parity_delta
+                    and overall_boot.mean_delta >= self.min_improvement_delta
+                )  # Non-inferior parity with minimum calibrated positive delta
             )
         ):
             decision = GateDecision.PROCEED_DEPLOY
             summary = (
                 f"Release APPROVED with PROCEED_DEPLOY. Zero core/replay regressions, "
-                f"Mean Delta: {overall_boot.mean_delta:+.3f}, 95% CI: [{overall_boot.ci_lower:+.3f}, "
-                f"{overall_boot.ci_upper:+.3f}], Wilcoxon p={w_p:.4f}."
+                f"Mean Delta: {overall_boot.mean_delta:+.3f} (min required: +{self.min_improvement_delta:.3f}), "
+                f"95% CI: [{overall_boot.ci_lower:+.3f}, {overall_boot.ci_upper:+.3f}], Wilcoxon p={w_p:.4f}."
             )
         else:
             decision = GateDecision.BLOCK_RELEASE
             summary = (
-                f"Release HELD with BLOCK_RELEASE. Candidate delta is indeterminate or minor "
-                f"non-significant variance (Mean Delta: {overall_boot.mean_delta:+.3f})."
+                f"Release HELD with BLOCK_RELEASE. Candidate delta is indeterminate or below required "
+                f"improvement margin (Mean Delta: {overall_boot.mean_delta:+.3f}, required: +{self.min_improvement_delta:.3f})."
             )
 
         return GateReport(
@@ -506,6 +643,7 @@ class StatisticalReleaseGate:
             overall_bootstrap=overall_boot,
             overall_hypothesis=overall_hypo,
             bucket_breakdown=bucket_breakdown,
+            power_analysis=power_metrics,
             passed_checks=passed_checks,
             violated_checks=violated_checks,
             recommendation_summary=summary,

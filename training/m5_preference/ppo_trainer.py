@@ -164,7 +164,9 @@ class PPOTrainer:
             p_len = int(prompt_lengths[i].item())
             action_mask[i, p_len:] = attention_mask[i, p_len:].float()
 
-        # 2. Extract policy log-probs and critic state values in deterministic eval mode (Fix GAP-03)
+        # 2. Extract policy log-probs and critic state values in deterministic eval mode
+        actor_was_training = self.actor.training
+        critic_was_training = self.critic.training
         self.actor.eval()
         self.critic.eval()
         try:
@@ -177,8 +179,8 @@ class PPOTrainer:
             else:
                 ref_log_probs = old_log_probs.detach().clone()
         finally:
-            self.actor.train()
-            self.critic.train()
+            self.actor.train(actor_was_training)
+            self.critic.train(critic_was_training)
 
         # 4. Compute token-level rewards
         rewards = torch.zeros((B, T), dtype=torch.float32, device=self.device)
@@ -302,17 +304,24 @@ class PPOTrainer:
         tokenizer,
         max_new_tokens: int = 32,
         temperature: float = 0.8,
+        eos_token_id: Optional[int] = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, list[str]]:
-        """Autoregressive online rollout sampling for a batch of prompts (Fix GAP-04).
+        """Autoregressive online rollout sampling for a batch of prompts.
 
-        Samples 1 trajectory per prompt using current actor policy.
+        Samples 1 trajectory per prompt using current actor policy with EOS stopping.
         Returns padded input_ids, attention_mask, prompt_lengths, and completion texts.
         """
+        if not prompts:
+            raise ValueError("Prompts sequence cannot be empty.")
+
         was_training = self.actor.training
         self.actor.eval()
         all_sequences: list[torch.Tensor] = []
         all_prompt_lens: list[int] = []
         all_completion_texts: list[str] = []
+
+        if eos_token_id is None:
+            eos_token_id = getattr(tokenizer, "eos_token_id", None)
 
         try:
             for prompt in prompts:
@@ -321,7 +330,10 @@ class PPOTrainer:
                 p_idx = torch.tensor([prompt_tokens], dtype=torch.long, device=self.device)
 
                 gen_seq = self.actor.generate(
-                    p_idx, max_new_tokens=max_new_tokens, temperature=temperature
+                    p_idx,
+                    max_new_tokens=max_new_tokens,
+                    temperature=temperature,
+                    eos_token_id=eos_token_id,
                 )
                 full_tokens = gen_seq[0].tolist()
                 completion_tokens = full_tokens[p_len:]
@@ -344,7 +356,65 @@ class PPOTrainer:
             prompt_lens_tensor = torch.tensor(all_prompt_lens, dtype=torch.long, device=self.device)
             return padded_ids, attn_mask, prompt_lens_tensor, all_completion_texts
         finally:
-            if was_training:
-                self.actor.train()
+            self.actor.train(was_training)
+
+    def step_on_prompts(
+        self,
+        prompts: Sequence[str],
+        tokenizer,
+        reward_fn: Optional[Callable[[list[str]], list[float]]] = None,
+        max_new_tokens: int = 32,
+        temperature: float = 0.8,
+        eos_token_id: Optional[int] = None,
+    ) -> dict[str, float]:
+        """Execute a full online rollout-to-update PPO training step.
+
+        1. Samples autoregressive rollouts from prompts with EOS stopping.
+        2. Scores trajectories with reward_fn or internal RewardModel.
+        3. Computes GAE advantages and target returns.
+        4. Updates Actor-Critic networks and returns step metrics.
+        """
+        input_ids, attention_mask, prompt_lengths, completions = self.sample_rollouts(
+            prompts=prompts,
+            tokenizer=tokenizer,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            eos_token_id=eos_token_id,
+        )
+
+        rollout_batch = self.build_rollout_batch(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            prompt_lengths=prompt_lengths,
+        )
+
+        if reward_fn is not None:
+            scores = reward_fn(completions)
+            B, T = input_ids.shape
+            custom_rewards = torch.zeros((B, T), dtype=torch.float32, device=self.device)
+            for i in range(B):
+                active_indices = torch.nonzero(rollout_batch.action_mask[i] > 0.0, as_tuple=False)
+                last_idx = active_indices[-1].item() if len(active_indices) > 0 else (input_ids.shape[1] - 1)
+                custom_rewards[i, last_idx] = float(scores[i])
+
+            advantages, returns = compute_gae_advantages(
+                rewards=custom_rewards,
+                values=rollout_batch.old_values,
+                masks=rollout_batch.action_mask,
+                gamma=self.gamma,
+                lam=self.lam,
+                normalize=True,
+            )
+            rollout_batch = PPORolloutBatch(
+                input_ids=rollout_batch.input_ids,
+                attention_mask=rollout_batch.attention_mask,
+                action_mask=rollout_batch.action_mask,
+                old_log_probs=rollout_batch.old_log_probs,
+                old_values=rollout_batch.old_values,
+                advantages=advantages,
+                returns=returns,
+            )
+
+        return self.train_step(rollout_batch)
 
 

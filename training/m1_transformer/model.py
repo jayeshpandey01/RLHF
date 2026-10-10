@@ -215,10 +215,12 @@ class MiniGPT(nn.Module):
         temperature: float = 1.0,
         top_k: Optional[int] = None,
         use_cache: bool = True,
+        eos_token_id: Optional[int] = None,
     ) -> torch.Tensor:
         """Autoregressively generate next tokens given conditioning prefix.
 
-        Supports both ultra-fast cached rollout (O(T)) and standard context recomputation.
+        Supports both ultra-fast cached rollout (O(T)) and standard context recomputation,
+        with optional early stopping on eos_token_id.
         """
         idx = idx.to(self.device)
         self.eval()
@@ -255,5 +257,8 @@ class MiniGPT(nn.Module):
                 idx_next = torch.multinomial(probs, num_samples=1)
 
             curr_idx = torch.cat((curr_idx, idx_next), dim=1)
+
+            if eos_token_id is not None and (idx_next == eos_token_id).all():
+                break
 
         return curr_idx

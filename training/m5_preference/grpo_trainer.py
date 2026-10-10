@@ -219,17 +219,24 @@ class GRPOTrainer:
         tokenizer,
         max_new_tokens: int = 32,
         temperature: float = 0.8,
+        eos_token_id: Optional[int] = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, list[str]]:
-        """Autoregressive online rollout sampling for a batch of prompts (Fix GAP-04).
+        """Autoregressive online rollout sampling for a batch of prompts.
 
-        For each prompt, generates group_size independent candidate trajectories,
+        For each prompt, generates group_size independent candidate trajectories with EOS stopping,
         returning padded token tensors, attention masks, prompt lengths, and completion strings.
         """
+        if not prompts:
+            raise ValueError("Prompts sequence cannot be empty.")
+
         was_training = self.actor.training
         self.actor.eval()
         all_sequences: list[torch.Tensor] = []
         all_prompt_lens: list[int] = []
         all_completion_texts: list[str] = []
+
+        if eos_token_id is None:
+            eos_token_id = getattr(tokenizer, "eos_token_id", None)
 
         try:
             for prompt in prompts:
@@ -239,7 +246,10 @@ class GRPOTrainer:
 
                 for _ in range(self.group_size):
                     gen_seq = self.actor.generate(
-                        p_idx, max_new_tokens=max_new_tokens, temperature=temperature
+                        p_idx,
+                        max_new_tokens=max_new_tokens,
+                        temperature=temperature,
+                        eos_token_id=eos_token_id,
                     )
                     full_tokens = gen_seq[0].tolist()
                     completion_tokens = full_tokens[p_len:]
@@ -262,7 +272,42 @@ class GRPOTrainer:
             prompt_lens_tensor = torch.tensor(all_prompt_lens, dtype=torch.long, device=self.device)
             return padded_ids, attn_mask, prompt_lens_tensor, all_completion_texts
         finally:
-            if was_training:
-                self.actor.train()
+            self.actor.train(was_training)
+
+    def step_on_prompts(
+        self,
+        prompts: Sequence[str],
+        tokenizer,
+        reward_fn: Callable[[list[str]], list[float]],
+        max_new_tokens: int = 32,
+        temperature: float = 0.8,
+        eos_token_id: Optional[int] = None,
+    ) -> dict[str, float]:
+        """Execute a full online group rollout-to-update GRPO training step.
+
+        1. Samples group rollouts (group_size trajectories per prompt) with EOS stopping.
+        2. Scores trajectories with reward_fn in exact group order.
+        3. Computes normalized intra-group advantages via build_group_batch.
+        4. Updates Actor policy with clipped surrogate objective and DeepSeek reverse KL.
+        """
+        input_ids, attention_mask, prompt_lengths, completions = self.sample_group_rollouts(
+            prompts=prompts,
+            tokenizer=tokenizer,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            eos_token_id=eos_token_id,
+        )
+
+        scores = reward_fn(completions)
+        rewards_tensor = torch.tensor(scores, dtype=torch.float32, device=self.device)
+
+        group_batch = self.build_group_batch(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            prompt_lengths=prompt_lengths,
+            rewards=rewards_tensor,
+        )
+
+        return self.train_step(group_batch)
 
 

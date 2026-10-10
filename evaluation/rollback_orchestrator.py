@@ -194,10 +194,30 @@ class RollbackOrchestrator:
                 report=report,
             )
         elif report.decision == GateDecision.TRIGGER_ROLLBACK:
-            return self.rollback_to_anchor(
-                report=report,
-                reason=report.recommendation_summary,
-            )
+            # Only perform active rollback if the regressed model is the currently active deployment
+            if candidate_model_id == self.state.active_model_id:
+                return self.rollback_to_anchor(
+                    report=report,
+                    reason=report.recommendation_summary,
+                )
+            else:
+                audit_entry = {
+                    "action": "HELD_TRIGGER_ROLLBACK",
+                    "candidate_id": candidate_model_id,
+                    "current_active": self.state.active_model_id,
+                    "gate_decision": report.decision.value,
+                    "summary": (
+                        f"Candidate {candidate_model_id} triggered rollback evaluation before release; "
+                        f"candidate rejected, active model {self.state.active_model_id} retained untouched."
+                    ),
+                    "timestamp": now,
+                }
+                self.state.history.append(audit_entry)
+                self._save_state(self.state)
+                logger.warning(
+                    f"Candidate {candidate_model_id} rejected due to regressions. Active deployment remains {self.state.active_model_id}."
+                )
+                return audit_entry
         else:
             # BLOCK_RELEASE or ALERT_DRIFT: Keep current model
             audit_entry = {
