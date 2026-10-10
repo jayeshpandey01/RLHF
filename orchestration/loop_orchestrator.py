@@ -10,12 +10,13 @@ Coordinates the decoupled high-throughput serving and out-of-band training lifec
 """
 
 import copy
+import re
 import threading
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
-from loguru import logger
 import torch
+from loguru import logger
 
 from curation.replay_buffer import ExperienceReplayBuffer, ReplaySample
 from evaluation.citation_verifier import CitationVerifier
@@ -27,6 +28,8 @@ from retrieval.hybrid import HybridRetriever
 from retrieval.schemas import RetrievalDocument, SearchResult
 from training.m5_preference.alignment_engine import AlignmentEngine, AlignmentStrategy
 from training.m5_preference.benchmark_suite import AlignmentBenchmarkSuite, AlignmentTestCase
+
+_USE_ORCHESTRATOR_MODEL = object()
 
 
 class ContinualLearningOrchestrator:
@@ -68,11 +71,72 @@ class ContinualLearningOrchestrator:
 
         self._model_lock = threading.Lock()
 
+    @staticmethod
+    def _extractive_fallback(query: str, evidence: list[SearchResult]) -> str:
+        """Return the most query-relevant sentence across cited retrieved sources."""
+        if not evidence:
+            return "I couldn't find source evidence to answer this query."
+
+        query_terms = {
+            token
+            for token in re.findall(r"\b[a-z0-9]+\b", query.lower())
+            if len(token) > 2 and token not in {"how", "does", "what", "the", "from", "that", "this"}
+        }
+        best_sentence = ""
+        best_source_index = 1
+        best_score = -1
+        for source_index, result in enumerate(evidence, start=1):
+            abstract_lines: list[str] = []
+            in_abstract = False
+            for line in result.text.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("#"):
+                    if "abstract" in stripped.lower():
+                        in_abstract = True
+                        continue
+                    if in_abstract:
+                        break
+                    continue
+                if not stripped or stripped.startswith("- **"):
+                    continue
+                if in_abstract:
+                    abstract_lines.append(stripped)
+                elif not abstract_lines:
+                    abstract_lines.append(stripped)
+
+            content = " ".join(abstract_lines) or result.text
+            content = re.sub(r"\s+", " ", content).strip()
+            content = re.sub(r"\s*\[\d+\]", "", content)
+            sentences = [
+                sentence.strip()
+                for sentence in re.split(r"(?<=[.!?])\s+", content)
+                if sentence.strip()
+            ]
+            for sentence in sentences:
+                sentence_terms = re.findall(r"\b[a-z0-9]+\b", sentence.lower())
+                matched_terms = {
+                    term
+                    for term in query_terms
+                    if any(token.startswith(term[:4]) or term.startswith(token[:4]) for token in sentence_terms)
+                }
+                if len(matched_terms) > best_score:
+                    best_sentence = sentence
+                    best_source_index = source_index
+                    best_score = len(matched_terms)
+
+        if not best_sentence:
+            return "I couldn't extract a readable answer from the retrieved sources."
+        sentence = best_sentence
+        if len(sentence) > 600:
+            sentence = sentence[:597].rsplit(" ", maxsplit=1)[0] + "..."
+        return f"{sentence} [{best_source_index}]"
+
     def process_query(
         self,
         query: str,
         top_k: int = 3,
         generator_fn: Optional[Callable[[str, List[SearchResult], Any], str]] = None,
+        active_model: Any = _USE_ORCHESTRATOR_MODEL,
     ) -> Dict[str, Any]:
         """High-concurrency query path: Semantic Cache -> Hybrid Retrieval -> Active Model.
 
@@ -106,10 +170,15 @@ class ContinualLearningOrchestrator:
         evidence = self.retriever.retrieve(clean_query, top_k=top_k)
 
         # Step 3: Inference generation
-        with self._model_lock:
-            current_model = self.active_model
+        if active_model is _USE_ORCHESTRATOR_MODEL:
+            with self._model_lock:
+                current_model = self.active_model
+        else:
+            current_model = active_model
 
-        if generator_fn is not None:
+        if generator_fn is not None and not evidence:
+            response = "I couldn't find source evidence to answer this query."
+        elif generator_fn is not None:
             response = generator_fn(clean_query, evidence, current_model)
         elif hasattr(current_model, "transformer") or hasattr(current_model, "config"):
             from training.m1_bigram.tokenizer import CharTokenizer
@@ -138,14 +207,29 @@ class ContinualLearningOrchestrator:
         # In-flight factual grounding verification
         if evidence and response:
             full_context = " ".join([e.text for e in evidence])
-            ref_docs = {e.doc_id: e.text for e in evidence if e.doc_id}
+            ref_docs = {
+                str(index): result.text
+                for index, result in enumerate(evidence, start=1)
+            }
+            ref_docs.update(
+                {result.doc_id: result.text for result in evidence if result.doc_id}
+            )
             ver_metrics = self.citation_verifier.verify_response(
                 response=response,
                 ground_truth_context=full_context,
                 reference_documents=ref_docs,
             )
-            if ver_metrics.factual_sentences > 0 and ver_metrics.faithfulness_score < 0.35:
-                response = f"{response}\n[Warning: Generated claims could not be verified against retrieved evidence.]"
+            if ver_metrics.factual_sentences > 0 and (
+                ver_metrics.citation_recall < 1.0
+                or ver_metrics.citation_precision < 1.0
+                or ver_metrics.faithfulness_score < 0.5
+                or ver_metrics.hallucinated_citations
+            ):
+                logger.warning(
+                    "Generated answer failed citation/faithfulness checks; returning a cited "
+                    "extract from the most query-relevant retrieved source."
+                )
+                response = self._extractive_fallback(clean_query, evidence)
 
         # Step 4: Populate L1 Semantic Cache
         evidence_dicts = [

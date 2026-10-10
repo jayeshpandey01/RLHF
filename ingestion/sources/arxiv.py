@@ -1,14 +1,15 @@
 """ArXiv Open API scientific and mathematical paper ingestion engine."""
 
-from typing import Optional
+import re
 import xml.etree.ElementTree as ET
+
 import httpx
 from loguru import logger
 
 from core.schemas import ScrapedDocumentSchema
 from ingestion.sources.base import BaseIngestionSource
 
-ARXIV_API_BASE = "http://export.arxiv.org/api/query"
+ARXIV_API_BASE = "https://export.arxiv.org/api/query"
 ATOM_NS = {"atom": "http://www.w3.org/2005/Atom", "arxiv": "http://arxiv.org/schemas/atom"}
 
 
@@ -19,11 +20,27 @@ class ArXivSource(BaseIngestionSource):
         super().__init__(name="arxiv")
         self.timeout = timeout
 
+    @staticmethod
+    def build_search_query(query: str) -> str:
+        """Convert common RLHF acronym queries into focused ArXiv phrase searches."""
+        cleaned = " ".join(query.split())
+        lower_query = cleaned.lower()
+        if re.search(r"\b(?:dpo|direct preference optimization)\b", lower_query):
+            search_query = 'all:"Direct Preference Optimization"'
+        elif re.search(r"\b(?:grpo|group relative policy optimization)\b", lower_query):
+            search_query = 'all:"Group Relative Policy Optimization"'
+        else:
+            return f"all:{cleaned}"
+
+        if "reward model" in lower_query:
+            search_query += ' AND all:"reward model"'
+        return search_query
+
     async def fetch(self, query: str, max_results: int = 5) -> list[ScrapedDocumentSchema]:
         """Query ArXiv API and parse paper abstracts into structured Markdown documents."""
         results: list[ScrapedDocumentSchema] = []
         params = {
-            "search_query": f"all:{query}",
+            "search_query": self.build_search_query(query),
             "start": "0",
             "max_results": str(max_results),
             "sortBy": "relevance",
@@ -37,7 +54,7 @@ class ArXivSource(BaseIngestionSource):
                     logger.warning(f"ArXiv query failed with HTTP {resp.status_code}")
                     return results
 
-                root = ET.fromstring(resp.text)
+                ET.fromstring(resp.text)
                 results = self.parse_atom_xml(resp.text)
         except Exception as e:
             logger.error(f"Error querying ArXiv for '{query}': {e}")
@@ -57,7 +74,7 @@ class ArXivSource(BaseIngestionSource):
             logger.debug(f"Failed to parse ArXiv XML feed: {e}")
         return results
 
-    def _parse_entry(self, entry: ET.Element, raw_xml: str) -> Optional[ScrapedDocumentSchema]:
+    def _parse_entry(self, entry: ET.Element, raw_xml: str) -> ScrapedDocumentSchema | None:
         """Parse individual Atom entry into a clean Markdown paper document."""
         try:
             title_elem = entry.find("atom:title", ATOM_NS)

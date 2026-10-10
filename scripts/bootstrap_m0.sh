@@ -25,6 +25,16 @@ if ! command -v ollama &> /dev/null; then
     if [[ "$OSTYPE" == "darwin"* ]]; then
         echo "Please install Ollama on macOS via 'brew install ollama' or downloading from ollama.com"
     else
+        if ! command -v zstd &> /dev/null; then
+            if command -v apt-get &> /dev/null && command -v sudo &> /dev/null; then
+                echo "📦 [M0 Bootstrap] Installing Ollama prerequisite: zstd..."
+                sudo apt-get update
+                sudo apt-get install -y zstd
+            else
+                echo "zstd is required to install Ollama. Install it with your system package manager, then rerun this script." >&2
+                exit 1
+            fi
+        fi
         curl -fsSL https://ollama.com/install.sh | sh
     fi
 fi

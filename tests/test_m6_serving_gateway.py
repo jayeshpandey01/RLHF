@@ -108,6 +108,31 @@ class TestM6ServingGateway(unittest.TestCase):
         self.assertGreaterEqual(d2["similarity"], 0.99)
         self.assertEqual(d2["response"], d1["response"])
 
+    def test_gateway_query_uses_serving_manager_model_snapshot(self):
+        class CandidateModel:
+            def generate(self, prompt):
+                return (
+                    "Direct Preference Optimization trains policy weights without needing "
+                    "a separate critic network [1]."
+                )
+
+        candidate = CandidateModel()
+        self.serving_manager.promote_candidate(candidate, new_version=2)
+        self.orchestrator.active_model = "stale orchestrator reference"
+
+        response = self.client.post(
+            "/query",
+            json={"query": "Test the promoted serving candidate", "top_k": 1},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            "Direct Preference Optimization trains policy weights without needing "
+            "a separate critic network [1].",
+            response.json()["response"],
+        )
+        self.assertEqual(response.json()["model_version"], 2)
+
     def test_gateway_rejects_unimplemented_streaming(self):
         response = self.client.post(
             "/query",
@@ -121,8 +146,9 @@ class TestM6ServingGateway(unittest.TestCase):
         response = self.client.post("/trigger_learning", json={"force": True})
         self.assertEqual(response.status_code, 200)
         data = response.json()
-        self.assertIn("status", data)
-        self.assertIn("model_version", data)
+        self.assertEqual(data["status"], "SKIPPED")
+        self.assertEqual(data["reason"], "TRAIN_FN_NOT_CONFIGURED")
+        self.assertEqual(data["model_version"], 1)
 
     def test_gateway_model_promotion_and_rollback_endpoints(self):
         """Verify POST /models/promote updates version and /models/rollback restores anchor."""
@@ -149,6 +175,12 @@ class TestM6ServingGateway(unittest.TestCase):
     def test_gateway_model_promotion_requires_candidate(self):
         response = self.client.post("/models/promote", json={"version": 4})
         self.assertEqual(response.status_code, 409)
+        self.assertEqual(self.serving_manager.model_version, 1)
+
+    def test_gateway_model_promotion_rejects_rollback_version(self):
+        self.orchestrator.candidate_model = "trained_candidate_v2"
+        response = self.client.post("/models/promote", json={"version": 0})
+        self.assertEqual(response.status_code, 422)
         self.assertEqual(self.serving_manager.model_version, 1)
 
     def test_concurrent_reader_writer_synchronization(self):

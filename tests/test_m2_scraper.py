@@ -17,7 +17,7 @@ from ingestion.provenance import ProvenanceLogger
 from ingestion.router import IngestionRouter, QueryIntent, classify_intent
 from ingestion.sources.arxiv import ArXivSource
 from ingestion.sources.base import canonicalize_url
-from ingestion.sources.crawler import SitemapCrawlerSource, TrafilaturaExtractor
+from ingestion.sources.crawler import TrafilaturaExtractor
 from ingestion.sources.duckduckgo import DuckDuckGoSource
 from ingestion.sources.openstreetmap import OpenStreetMapSource
 from ingestion.sources.wikipedia import WikipediaSource
@@ -249,6 +249,18 @@ class TestM2Scraper(unittest.TestCase):
         self.assertIn("Zhihong Shao", docs[0].clean_markdown)
         self.assertIn("cs.CL", docs[0].clean_markdown)
 
+    def test_arxiv_search_query_targets_canonical_dpo_paper(self):
+        self.assertEqual(
+            ArXivSource.build_search_query(
+                "How does Direct Preference Optimization eliminate the reward model?"
+            ),
+            'all:"Direct Preference Optimization" AND all:"reward model"',
+        )
+        self.assertEqual(
+            ArXivSource.build_search_query("latest advances in GRPO"),
+            'all:"Group Relative Policy Optimization"',
+        )
+
     def test_duckduckgo_parsing(self):
         """Verify DuckDuckGo HTML parser extracts links and snippets."""
         ddg = DuckDuckGoSource()
@@ -326,6 +338,12 @@ class TestM2Scraper(unittest.TestCase):
         )
         self.assertEqual(
             classify_intent("loss function convergence theorem derivation"),
+            QueryIntent.ACADEMIC_RESEARCH,
+        )
+        self.assertEqual(
+            classify_intent(
+                "How does Direct Preference Optimization eliminate the reward model?"
+            ),
             QueryIntent.ACADEMIC_RESEARCH,
         )
 

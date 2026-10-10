@@ -8,13 +8,13 @@ import asyncio
 import re
 import time
 from enum import Enum
-from typing import Optional
+
 from loguru import logger
 
 from core.schemas import ScrapedDocumentSchema
 from ingestion.provenance import ProvenanceLogger
-from ingestion.sources.base import canonicalize_url
 from ingestion.sources.arxiv import ArXivSource
+from ingestion.sources.base import canonicalize_url
 from ingestion.sources.crawler import SitemapCrawlerSource
 from ingestion.sources.duckduckgo import DuckDuckGoSource
 from ingestion.sources.openstreetmap import OpenStreetMapSource
@@ -41,6 +41,7 @@ INTENT_PATTERNS: dict[QueryIntent, list[str]] = {
     ],
     QueryIntent.ACADEMIC_RESEARCH: [
         r"\b(arxiv|paper|theorem|proof|lemma|corollary|mathematical\s+derivation)\b",
+        r"\b(direct\s+preference\s+optimization|group\s+relative\s+policy\s+optimization)\b",
         r"\b(transformer\s+architecture|attention\s+mechanism|backpropagation|gradient\s+descent)\b",
         r"\b(loss\s+function|convergence\s+rate|empirical\s+evaluation|ablation\s+study)\b",
         r"\b(pre-training|post-training|dpo|grpo|rlhf|kv-cache|flashattention)\b",
@@ -76,7 +77,7 @@ class IngestionRouter:
 
     def __init__(
         self,
-        provenance_logger: Optional[ProvenanceLogger] = None,
+        provenance_logger: ProvenanceLogger | None = None,
         timeout_seconds: float = 15.0,
     ):
         self.provenance = provenance_logger or ProvenanceLogger()
@@ -97,7 +98,7 @@ class IngestionRouter:
         self,
         query: str,
         max_results: int = 5,
-        forced_intent: Optional[QueryIntent] = None,
+        forced_intent: QueryIntent | None = None,
     ) -> tuple[QueryIntent, list[ScrapedDocumentSchema]]:
         """Route a query to the primary source with fallback cascades and provenance logging."""
         intent = forced_intent or self.classify(query)
@@ -115,7 +116,7 @@ class IngestionRouter:
                 primary_source.fetch(query, max_results=max_results),
                 timeout=self.timeout,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(f"Primary source {primary_source.name} timed out for query '{query}'")
         except Exception as e:
             logger.warning(f"Primary source {primary_source.name} failed for query '{query}': {e}")
@@ -196,4 +197,3 @@ class IngestionRouter:
             return self.wiki_source, self.ddg_source
         else:  # GENERAL_WEB
             return self.ddg_source, self.wiki_source
-

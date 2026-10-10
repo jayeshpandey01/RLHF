@@ -1,7 +1,6 @@
 """Industrial data cleaning, quality filtering, and heuristic validation (C4 / FineWeb standards)."""
 
 import re
-from typing import Optional
 
 # Standard English high-frequency stopwords for density filtering
 COMMON_STOPWORDS = {
@@ -98,7 +97,13 @@ class C4QualityFilter:
             }
 
         # 5. Terminal Punctuation Ratio (detects broken sentences / truncated scraping)
-        sentences = [s.strip() for s in re.split(r"\n+", cleaned) if s.strip()]
+        lines = [line.strip() for line in cleaned.splitlines() if line.strip()]
+        sentences = [
+            line
+            for line in lines
+            if not line.startswith("#")
+            and not re.match(r"[-*]\s+\*\*[^*]+\*\*:", line)
+        ]
         if sentences:
             punct_count = sum(1 for s in sentences if s[-1] in VALID_TERMINAL_PUNCTUATION)
             punct_ratio = punct_count / float(len(sentences))
@@ -120,19 +125,15 @@ class C4QualityFilter:
         return True, "PASSED", metrics
 
     def _compute_char_ngram_repetition(self, text: str, n: int = 4) -> float:
-        """Compute the fraction of characters in duplicated character n-grams."""
+        """Measure whether one character n-gram dominates the normalized text."""
         normalized = re.sub(r"\s+", "", text.lower())
-        total_len = len(normalized)
-        if total_len < n * 2:
+        total_ngrams = len(normalized) - n + 1
+        if total_ngrams < n:
             return 0.0
 
         counts: dict[str, int] = {}
-        for i in range(total_len - n + 1):
+        for i in range(total_ngrams):
             gram = normalized[i : i + n]
             counts[gram] = counts.get(gram, 0) + 1
 
-        # Characters covered by duplicated n-grams (count > 2)
-        duplicated_chars = sum((count - 1) * n for count in counts.values() if count > 2)
-        rep_ratio = min(1.0, duplicated_chars / float(total_len))
-        return rep_ratio
-
+        return max(counts.values()) / float(total_ngrams)

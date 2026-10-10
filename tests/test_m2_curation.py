@@ -96,6 +96,21 @@ class TestM2Curation(unittest.TestCase):
         """Verify that generator infinite loops and corrupted byte streams are rejected."""
         filt = C4QualityFilter(min_words=5, max_char_repetition_rate=0.15)
 
+        is_valid_prose, prose_reason, prose_metrics = filt.evaluate(self.clean_sample)
+        self.assertTrue(is_valid_prose, f"Ordinary prose was rejected: {prose_reason}")
+        self.assertLess(prose_metrics["char_repetition_rate"], 0.15)
+
+        structured_text = (
+            "# Research Paper: Preference Optimization\n\n"
+            "## Metadata\n"
+            "- **Authors**: Research Group\n"
+            "- **Published Date**: 2026\n\n"
+            "## Abstract\n"
+            f"{self.clean_sample}"
+        )
+        is_valid_structured, structured_reason, _ = filt.evaluate(structured_text)
+        self.assertTrue(is_valid_structured, f"Structured article was rejected: {structured_reason}")
+
         # Corrupted looping string
         loop_text = (
             "The model output entered an unrecoverable failure loop: "
