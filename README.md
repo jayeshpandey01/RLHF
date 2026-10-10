@@ -1,5 +1,10 @@
 # Autonomous Continual Learning LLM Prototype
 
+
+<p align="center">
+  <img src="assets/bunny.jpg" alt="Calm Koala Resting" width="48%" style="border-radius: 10px;" />
+</p>
+
 Research and prototype code for a continual-learning LLM pipeline: web ingestion, curation, retrieval, replay, MiniGPT/LoRA training, evaluation, and serving components.
 
 **Implementation status:** the default FastAPI app now performs live web collection, curation, persistent indexing, and Ollama-backed grounded answers. Curated documents feed a separate Hugging Face Qwen LoRA worker; candidates are promoted into Ollama only when the statistical benchmark gate approves them. This is a single-process prototype, not a durable or authenticated production service. See [the research document's implementation status](docs/research.md#pipeline-implementation-status).
@@ -106,7 +111,7 @@ Do not expose the API or its model promotion/training endpoints through a public
 
 This CI pipeline validates the repository; it does not deploy to Google Cloud or configure a production model backend.
 
----
+
 
 ## Project Structure
 
