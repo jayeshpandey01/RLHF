@@ -85,14 +85,14 @@ class ChatMLFormatter:
 
     @classmethod
     def format_prompt_only(cls, messages: list[ChatMessage]) -> str:
-        """Serialize system and user turns, appending '<|im_start|>assistant\\n' for inference generation."""
-        # Find all turns up to before the final assistant response
-        prompt_messages = []
-        for msg in messages:
-            if msg.role != "assistant":
-                prompt_messages.append(msg)
-            else:
-                break
+        """Serialize prompt context for inference generation, appending '<|im_start|>assistant\\n'.
+        
+        Properly supports multi-turn dialogues: strips only the terminal assistant turn if present.
+        """
+        if messages and messages[-1].role == "assistant":
+            prompt_messages = messages[:-1]
+        else:
+            prompt_messages = list(messages)
         formatted_prompt = cls.format_dialogue(prompt_messages)
         return f"{formatted_prompt}{cls.ASSISTANT_HEADER}"
 

@@ -95,9 +95,15 @@ class ContinualSFTOrchestrator:
         anchor_train = anchor_instructs[:split_anchor]
         anchor_val = anchor_instructs[split_anchor:] or anchor_instructs
 
-        split_web = max(1, int(len(web_instructs) * 0.8))
-        web_train = web_instructs[:split_web]
-        web_val = web_instructs[split_web:] or web_instructs
+        if len(web_instructs) >= 2:
+            split_web = max(1, int(len(web_instructs) * 0.8))
+            if split_web >= len(web_instructs):
+                split_web = len(web_instructs) - 1
+            web_train = web_instructs[:split_web]
+            web_val = web_instructs[split_web:]
+        else:
+            web_train = web_instructs
+            web_val = []
 
         train_ds = HarmonizedSFTDataset(
             anchor_examples=anchor_train,
@@ -112,6 +118,7 @@ class ContinualSFTOrchestrator:
             anchor_ratio=anchor_ratio,
             epoch_length=50,
             seed=self.sft_config.seed + 1,
+            deterministic=True,
         )
 
         # 2. Preserve uncorrupted baseline copy for gate evaluation
@@ -140,11 +147,13 @@ class ContinualSFTOrchestrator:
             anchor_examples=anchor_val,
             epoch_length=30,
             seed=999,
+            deterministic=True,
         )
         domain_eval_ds = HarmonizedSFTDataset(
-            anchor_examples=web_val,
+            anchor_examples=web_val or web_train,
             epoch_length=30,
             seed=888,
+            deterministic=True,
         )
 
         evaluator = SFTRegressionEvaluator(

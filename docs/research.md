@@ -15,6 +15,9 @@
 7. [Step 6: Milestone 2 — Web Ingestion, MinHash LSH, & Model Collapse Prevention](#step-6-milestone-2--web-ingestion-minhash-lsh--model-collapse-prevention)
 8. [Step 7: Milestone 3 — Post-Training Alignment (SFT & Parameter-Efficient LoRA)](#step-7-milestone-3--post-training-alignment-sft-dpo--grpo)
 9. [Step 8: Milestone 4 — Evaluation, Citation Verification, & Autonomous Release Gate](#step-8-milestone-4--evaluation-citation-verification--autonomous-release-gate)
+10. [Step 9: Milestone 5 — Preference Learning, Direct Preference Optimization (DPO), & Reinforcement Learning with Verifiable Rewards (GRPO)](#step-9-milestone-5--preference-learning-direct-preference-optimization-dpo--reinforcement-learning-with-verifiable-rewards-grpo)
+11. [Step 10: Milestone 6 — Autonomous Continual Learning Loop Orchestrator, Hybrid Retrieval, & Serving Gateway](#step-10-milestone-6--autonomous-continual-learning-loop-orchestrator-hybrid-retrieval--serving-gateway)
+12. [Research Verification and Implementation Status](#research-verification-and-implementation-status)
 
 ---
 
@@ -38,23 +41,16 @@
 ```
 
 ### 0.2 Hybrid Retrieval Mathematics
-For query $q$ and document $d \in \mathcal{D}$, the hybrid relevance score combines lexical BM25 and dense embedding cosine similarity via convex combination:
+For query $q$ and document $d \in \mathcal{D}$, an optional convex score fusion can combine lexical BM25 and cosine similarity:
 $$S_{\text{hybrid}}(q, d) = \alpha \cdot \hat{S}_{\text{BM25}}(q, d) + (1 - \alpha) \cdot \hat{S}_{\text{dense}}(q, d), \quad \alpha \in [0, 1]$$
 where scores are min-max normalized over candidate pool $\mathcal{C}$:
 $$\hat{S}(q, d) = \frac{S(q, d) - \min_{c \in \mathcal{C}} S(q, c)}{\max_{c \in \mathcal{C}} S(q, c) - \min_{c \in \mathcal{C}} S(q, c) + \epsilon}$$
 
-Alternatively, Reciprocal Rank Fusion (RRF) provides rank-invariant combination:
+The current implementation combines BM25 and deterministic character n-gram hash cosine rankings using Reciprocal Rank Fusion (RRF); it does not use the min-max interpolation above or a pretrained dense embedding model. RRF provides rank-based combination:
 $$\text{RRF}(d) = \sum_{m \in \{\text{lexical}, \text{dense}\}} \frac{1}{k + \text{rank}_m(d)}, \quad k = 60$$
 
-### 0.3 Zero-Downtime Hot-Swap Protocol
-When a newly trained candidate checkpoint $\theta_{\text{cand}}$ passes the Evaluation Release Gate:
-1. Export model adapter or fused weights into GGUF format:
-   $$\theta_{\text{fused}} = \theta_{\text{base}} + \frac{\alpha}{r} B A$$
-2. Build Ollama model manifest via local REST API:
-   `POST /api/create {"name": "target_model:candidate", "modelfile": "FROM base\nADAPTER candidate.gguf"}`
-3. Atomic alias re-pointing:
-   `POST /api/copy {"source": "target_model:candidate", "destination": "target_model:latest"}`
-In-flight queries continue uninterrupted on active memory buffers; new requests immediately execute on the updated weights.
+### 0.3 Model Promotion: Current Python Path and Ollama Gap
+The current `ModelServingManager` and continual orchestrator can replace an in-process model reference after a candidate passes the configured gate. This is not an Ollama hot-swap: the repository does not currently export LoRA weights to GGUF, create an Ollama model manifest, or repoint an Ollama alias. Those operations are a proposed integration, not an implemented deployment guarantee. In-flight request safety also depends on the caller retaining and using the old model reference for the duration of inference.
 
 ---
 
@@ -64,10 +60,10 @@ In-flight queries continue uninterrupted on active memory buffers; new requests 
 The host hardware detection layer dynamically determines optimal compute precision and execution parameters:
 - **Apple Silicon (Mac M-series MPS)**:
   - Backing: Metal Performance Shaders with Unified Memory Architecture (UMA).
-  - Precision: `torch.bfloat16` (preserves 8-bit dynamic exponent range of `float32` while halving memory footprint from 4 bytes to 2 bytes per parameter).
+  - The hardware strategy currently selects `torch.bfloat16`; support depends on the installed PyTorch/MPS version and device, and should be validated before training.
   - Gradient Accumulation: $B_{\text{effective}} = B_{\text{micro}} \times K_{\text{accum}}$.
-- **NVIDIA CUDA**: Auto-tunes TF32 tensor cores and FlashAttention-2 kernels.
-- **CPU (Cloud Shell / Codespaces)**: Sets OpenMP thread count: $N_{\text{threads}} = \min(4, N_{\text{cores}})$.
+- **NVIDIA CUDA**: Selects `bfloat16` when supported and otherwise `float16`; TF32 and FlashAttention-2 are not enabled by the hardware strategy.
+- **CPU (Cloud Shell / Codespaces)**: Sets PyTorch's thread count to $\max(1, N_{\text{cores}} - 1)$.
 
 ### 1.2 Schema Contracts (Pydantic V2)
 Strict data integrity contracts govern every transition:
@@ -234,7 +230,7 @@ Web data ingestion for LLM post-training sits at the boundary of information ret
 4. **Penedo, G., et al. (2023)**: *The RefinedWeb Dataset for Falcon LLM: Outperforming Curated Corpora with Web Data, and Web Data Only*. NeurIPS 2023.
    - Demonstrated that aggressive deduplication (MinHash at Jaccard threshold $s = 0.80$) and line-level repetition filtering removes $50\%+$ of crawled web pages and yields models that outperform those trained on human-curated datasets.
 5. **Shumailov, I., et al. (2024)**: *AI models collapse when trained on recursively generated data*. Nature, 631, 755–759.
-   - Proved mathematically that training on synthetic web text causes variance decay ($\sigma_n^2 \to 0$), irreversibly degrading the tails of the data distribution.
+   - Shows, through theoretical analyses and experiments, that recursive training on generated data can cause distributional tails to be lost and model quality to degrade. The results depend on the data and learning setup; they are not a universal theorem that every synthetic-data pipeline has monotonically decreasing variance or irreversible collapse.
 6. **Dodge, J., et al. (2021)**: *Documenting Large Webtext Corpora: A Case Study on the Colossal Clean Crawled Corpus (C4)*. EMNLP 2021.
    - Established the 13-gram overlap protocol for detecting benchmark contamination between training data and evaluation suites.
 7. **Carlini, N., et al. (2021)**: *Extracting Training Data from Large Language Models*. USENIX Security 2021.
@@ -247,19 +243,13 @@ Web data ingestion for LLM post-training sits at the boundary of information ret
 
 ### 6.3 Mathematical Proofs & Algorithmic Formulations
 
-#### 1. Model Collapse Variance Decay Theorem (Shumailov et al., Nature 2024)
-Let $p_0(x) = \mathcal{N}(\mu_0, \sigma_0^2)$ be the true underlying distribution. At generation $n+1$, the model is trained on $M$ samples generated by the previous model:
-$$X_{n+1}^{(1)}, \dots, X_{n+1}^{(M)} \overset{\text{i.i.d.}}{\sim} \mathcal{N}(\mu_n, \sigma_n^2)$$
-The unbiased sample variance estimator is:
-$$\hat{\sigma}_{n+1}^2 = \frac{1}{M - 1} \sum_{i=1}^M \left(X_{n+1}^{(i)} - \bar{X}_{n+1}\right)^2$$
-Taking the expectation:
-$$\mathbb{E}[\hat{\sigma}_{n+1}^2] = \sigma_n^2 \implies \mathbb{E}[\sigma_n^2] = \left(1 - \frac{1}{M}\right)^n \sigma_0^2 \xrightarrow{n \to \infty} 0$$
-The functional variance of the model collapses geometrically at rate $\left(1 - \frac{1}{M}\right)$, destroying tail knowledge.
+#### 1. Recursive Training on Generated Data (Shumailov et al., 2024)
+Shumailov et al. analyze model collapse under explicit assumptions about recursive generation, finite sampling, and model approximation. Their results show that errors can accumulate across generations and that rare modes may disappear; the paper does not establish the generic recurrence below or a universal monotonic variance-decay law. In one Gaussian estimation setup, the paper instead derives variance growth of approximately $\sigma^2(1+n/M)$ for fixed sample size $M$ while analyzing distributional estimation risk. Therefore this project treats synthetic-data detection and collapse thresholds as engineering heuristics, not as consequences of a universal variance theorem.
 
 #### 2. Experience Replay Convex Combination Buffer
-To guarantee information entropy preservation, training mini-batches are drawn from a convex combination buffer:
+As a practical mitigation for forgetting, training mini-batches are drawn from a convex combination buffer:
 $$\mathcal{D}_{\text{train}} = \alpha \cdot \mathcal{D}_{\text{anchor}} + (1 - \alpha) \cdot \mathcal{D}_{\text{web}}, \quad \alpha = 0.70$$
-Anchor baseline data preserves core linguistic capabilities and prevents catastrophic forgetting, while 30% web data ingests fresh domain knowledge.
+Anchor examples retain a share of training exposure while 30% web data introduces new domain content. Replay is not a proof that forgetting or model collapse is prevented.
 
 #### 3. $k$-Shingling & Jaccard Similarity
 A document $d$ is mapped to a set of contiguous word shingles $S_k(d)$:
@@ -269,14 +259,14 @@ The Jaccard similarity between documents $A$ and $B$ is:
 $$J(A, B) = \frac{|S_k(A) \cap S_k(B)|}{|S_k(A) \cup S_k(B)|} \in [0, 1]$$
 
 #### 4. MinHash Theorem (Broder, 1997)
-Let $h: \mathbb{V}^k \to \{0, \dots, p-1\}$ be a universal hash function drawn randomly from a 2-independent family:
+Let $\pi$ be a uniformly random permutation of the shingle universe and define $h_{\min}(A) = \min_{s \in A} \pi(s)$. For ideal random permutations:
+$$\mathbb{P}[h_{\min}(A) = h_{\min}(B)] = J(A, B)$$
+
+Practical implementations approximate the random-permutation premise with finite hash families. Pairwise independence by itself does not establish exact min-wise independence. A common affine hash construction is:
 $$h_i(x) = (a_i \cdot x + b_i) \bmod p$$
 where $p$ is a Mersenne prime ($p = 2^{61} - 1$), $a_i \in \{1, \dots, p-1\}$, and $b_i \in \{0, \dots, p-1\}$.
-The MinHash value is defined as:
-$$h_{\min}(A) = \min_{s \in S_k(A)} h(s)$$
 
-**Theorem**: $\mathbb{P}\left[ h_{\min}(A) = h_{\min}(B) \right] = J(A, B)$.
-**Proof**: Consider the union $U = S_k(A) \cup S_k(B)$. Under a random uniform hash permutation, every element in $U$ is equally likely to achieve the minimum hash value $\min_{s \in U} h(s)$. The event $h_{\min}(A) = h_{\min}(B)$ occurs if and only if the element achieving the minimum hash value belongs to the intersection $S_k(A) \cap S_k(B)$.
+**Proof for the ideal permutation**: Consider the union $U = S_k(A) \cup S_k(B)$. Every element in $U$ is equally likely to achieve the minimum under a uniformly random permutation. The two minima agree exactly when that element belongs to $S_k(A) \cap S_k(B)$.
 Since there are $|S_k(A) \cap S_k(B)|$ favorable elements out of $|U| = |S_k(A) \cup S_k(B)|$ total elements:
 $$\mathbb{P}[h_{\min}(A) = h_{\min}(B)] = \frac{|S_k(A) \cap S_k(B)|}{|S_k(A) \cup S_k(B)|} = J(A, B) \quad \blacksquare$$
 
@@ -623,7 +613,7 @@ $$\mathcal{P}_{\text{batch}} \sim \alpha \cdot \mathcal{P}_{\text{anchor}} + (1 
 To support large-scale post-training without RAM spikes:
 1. Documents from $\mathcal{P}_{\text{anchor}}$ and $\mathcal{P}_{\text{web}}$ are tokenized into uint16/uint32 arrays.
 2. Tokens are serialized directly to disk binary format (`train.bin`, `val.bin`).
-3. During training, `MemoryMappedTokenDataset` accesses tokens via OS-level virtual memory page mapping (`np.memmap`), enabling random batch sampling with $\mathcal{O}(1)$ RAM overhead.
+3. During training, `MemoryMappedTokenDataset` accesses tokens through OS-backed `np.memmap`; sampled working memory is bounded by the requested batch, while file pages are loaded on demand.
 
 ```mermaid
 flowchart TD
@@ -638,7 +628,7 @@ flowchart TD
     
     Replay --> Tokenizer["Harmonized Tokenizer"]
     Tokenizer --> BinaryExport["Binary Serializer<br/>(data/train.bin, data/val.bin)"]
-    BinaryExport --> MemMap["MemoryMappedTokenDataset<br/>O(1) RAM Streaming"]
+    BinaryExport --> MemMap["MemoryMappedTokenDataset<br/>memory-mapped reads after export"]
     MemMap --> Training["Post-Training Engine (SFT / GRPO)"]
 
     style Router fill:#1e293b,stroke:#38bdf8,stroke-width:2px,color:#fff
@@ -662,7 +652,7 @@ Post-training adaptation bridges the gap between raw causal next-token predictor
 
 #### 1. LIMA: Less Is More for Alignment (Zhou et al., NeurIPS 2023 - Meta AI)
 Zhou et al. fine-tuned a 65B parameter LLaMA model on just **1,000 meticulously curated instruction-response pairs** and compared it against models trained on 50,000+ uncurated examples from Stanford Alpaca and automated RLHF systems.
-- **The Superficial Alignment Hypothesis**: A language model's fundamental reasoning capabilities, factual knowledge, and world representation are established almost exclusively during pre-training. Post-training supervised fine-tuning (SFT) primarily acts as a superficial filter that teaches the model the sub-distribution of conversational format, tone, and response structure.
+- **The Superficial Alignment Hypothesis**: LIMA reports evidence on its evaluated model and tasks that a small, curated SFT set can substantially affect response format and style without teaching all underlying capabilities from scratch. Treat this as a hypothesis supported in that setting, not a universal account of where model capabilities originate.
 - **Continual SFT Implication**: When adapting a pre-trained model to new domain knowledge ingested from the web (Milestone 2), we do not need millions of noisy instruction samples. A small, pristine instruction set consisting of anchor golden conversations combined with high-quality synthesized domain prompts yields superior alignment while minimizing gradient perturbation to pre-trained weights.
 
 ---
@@ -712,8 +702,8 @@ Dettmers et al. proved that pre-trained weights $W_0$ can be compressed into 4-b
 
 #### 6. Catastrophic Forgetting & Continual Learning Theory (McCloskey & Cohen 1989; Shumailov et al., Nature 2024)
 - **Catastrophic Forgetting**: When an artificial neural network trained on task $A$ is subsequently trained on task $B$, the weight adjustments $\Delta \Theta$ computed along the loss manifold $\nabla \mathcal{L}_B$ often project destructively onto the orthogonal subspace preserving task $A$, leading to rapid erasure of baseline knowledge.
-- **Model Collapse via Synthetic / Unbalanced Loops** (Shumailov et al., *Nature* 2024): Iterative fine-tuning on domain-specific or model-generated text causes progressive variance shrinkage in the output distribution. The tails of the data distribution disappear, causing functional entropy $H(\pi_\theta)$ to collapse to zero.
-- **Experience Replay Mitigation** (de Masson d'Autume et al., NeurIPS 2019): Maintaining a convex mixture of anchor pre-training data $\mathcal{P}_{\text{anchor}}$ ($70\%$) and new domain data $\mathcal{P}_{\text{web}}$ ($30\%$) bounds the entropy decline and guarantees that pre-trained representations remain anchored during adaptation.
+- **Model Collapse via Recursive Synthetic Data** (Shumailov et al., *Nature* 2024): Under the paper's studied conditions, recursive training on generated data can degrade learned distributions and lose tail modes. This is not equivalent to a claim that every domain-specific fine-tune drives output entropy monotonically to zero.
+- **Experience Replay Mitigation** (de Masson d'Autume et al., NeurIPS 2019): Replay mixes prior examples with new task data to mitigate forgetting. The 70/30 mixture used here is a tunable project choice, not a literature-derived optimum or a guarantee on model behavior.
 
 ---
 
@@ -850,12 +840,10 @@ Let mini-batches during SFT be sampled from the convex mixture:
 $$\mathcal{P}_{\text{replay}} = \lambda \mathcal{P}_{\text{anchor}} + (1 - \lambda) \mathcal{P}_{\text{web}}, \quad \lambda = 0.70$$
 where $\mathcal{P}_{\text{anchor}}$ is the golden anchor baseline distribution and $\mathcal{P}_{\text{web}}$ is the newly curated web domain distribution.
 
-By the concavity of Shannon entropy $H(P) = -\sum_x P(x) \ln P(x)$:
+By the concavity of Shannon entropy $H(P) = -\sum_x P(x) \ln P(x)$, the entropy of this *data-source mixture* satisfies:
 $$H(\mathcal{P}_{\text{replay}}) \ge \lambda H(\mathcal{P}_{\text{anchor}}) + (1 - \lambda) H(\mathcal{P}_{\text{web}})$$
 
-Since $\mathcal{P}_{\text{anchor}}$ possesses high entropy across diverse general reasoning and conversational patterns ($H(\mathcal{P}_{\text{anchor}}) \ge H_0$), the entropy of the fine-tuning stream is strictly bounded from below:
-$$H(\mathcal{P}_{\text{replay}}) \ge 0.70 \cdot H_0$$
-This provides a rigorous mathematical safeguard preventing the model collapse ($H \to 0$) proven by Shumailov et al. (Nature 2024).
+If $H(\mathcal{P}_{\text{anchor}}) \ge H_0$ and entropy is measured over a shared sample space, this yields $H(\mathcal{P}_{\text{replay}}) \ge 0.70 H_0$. This is a statement about the input data distribution only; it is not a lower bound on the trained model's output entropy and does not prove protection from forgetting or model collapse.
 
 ---
 
@@ -3016,10 +3004,1548 @@ class RollbackOrchestrator:
    - Autonomous Rollback Orchestrator atomic promotion, hot-swap rollback, and audit ledger persistence.
 5. **Step 4.4.5**: Integrate Phase 4.4 tests into master test runner `tests/run_all.py` and verify 100% test pass rate across all milestones (M0–M4), achieving complete Milestone 4 verification.
 
+---
 
+# Step 9: Milestone 5 — Preference Learning, Direct Preference Optimization (DPO), & Reinforcement Learning with Verifiable Rewards (GRPO)
 
+> **Objective**: Implement a mathematically sound, production-grade preference optimization and reinforcement learning post-training framework. The system transitions the model from supervised imitation (SFT, Milestone 3) to preference alignment and reasoning with verifiable rewards without human annotation bottlenecks. It encompasses paired Bradley-Terry reward modeling, Direct Preference Optimization (DPO), rule-based verifiable reward synthesis (citations, formatting, brevity), and critic-free Group Relative Policy Optimization (GRPO).
 
+---
 
+### 9.1 Landmark Academic Papers Behind Preference Learning & Verifiable RL
 
+1. **Bradley, R. A., & Terry, M. E. (1952)**: *Rank analysis of incomplete block designs: I. The method of paired comparisons*. Biometrika, 39(3/4), 324–345.
+   - **Foundational Premise**: Models the probability that an individual prefers option $y_w$ over $y_l$ given prompt $x$ as a logistic sigmoid over latent scalar rewards:
+     $$P(y_w \succ y_l \mid x) = \sigma(r(x, y_w) - r(x, y_l)) = \frac{1}{1 + e^{-(r(x, y_w) - r(x, y_l))}}$$
+   - Forms the mathematical bedrock of all modern RLHF reward modeling.
 
+2. **Ouyang, L., Wu, J., Jiang, X., et al. (NeurIPS 2022)**: *Training language models to follow instructions with human feedback* (InstructGPT).
+   - **Three-Stage Pipeline**: Formalized the classical alignment sequence:
+     1. Supervised Fine-Tuning (SFT) on prompt-response demonstrations.
+     2. Training a scalar Reward Model $r_\phi(x, y)$ on human preference pairs via Bradley-Terry loss.
+     3. Reinforcement Learning via Proximal Policy Optimization (PPO) against the reward model with a KL divergence penalty to the frozen SFT baseline $\pi_{\text{ref}}$:
+        $$\max_\theta \mathbb{E}_{x \sim \mathcal{D}, y \sim \pi_\theta(\cdot \mid x)} \left[ r_\phi(x, y) - \beta \mathbb{D}_{\text{KL}}(\pi_\theta(y \mid x) \parallel \pi_{\text{ref}}(y \mid x)) \right]$$
+   - **Key Limitation**: Required simultaneously hosting four models in memory during PPO training (Actor Policy $\pi_\theta$, Critic / Value Function $V_\psi$, Reference Policy $\pi_{\text{ref}}$, and Reward Model $r_\phi$), creating immense memory overhead, training instability, and hyperparameter sensitivity.
 
+3. **Rafailov, R., Sharma, A., Mitchell, E., Ermon, S., Manning, C. D., & Finn, C. (NeurIPS 2023)**: *Direct Preference Optimization: Your Language Model is Secretly a Reward Model* (DPO).
+   - **Theoretical Breakthrough**: Proved that the constrained RL optimization problem has an exact closed-form analytical solution for the optimal policy:
+     $$\pi^*(y \mid x) = \frac{1}{Z(x)} \pi_{\text{ref}}(y \mid x) \exp\left( \frac{1}{\beta} r(x, y) \right)$$
+   - Inverting this relationship expresses the reward function directly in terms of the optimal policy's log-likelihood ratio against the reference policy:
+     $$r(x, y) = \beta \log \frac{\pi^*(y \mid x)}{\pi_{\text{ref}}(y \mid x)} + \beta \log Z(x)$$
+   - When substituted into the Bradley-Terry preference probability, the intractable partition function $Z(x) = \sum_y \pi_{\text{ref}}(y \mid x) \exp\left(\frac{1}{\beta} r(x, y)\right)$ **strictly cancels out**:
+     $$P(y_w \succ y_l \mid x) = \sigma\left( \beta \log \frac{\pi_\theta(y_w \mid x)}{\pi_{\text{ref}}(y_w \mid x)} - \beta \log \frac{\pi_\theta(y_l \mid x)}{\pi_{\text{ref}}(y_l \mid x)} \right)$$
+   - **Impact**: Enables direct, stable, offline preference optimization without requiring a separate reward model or RL policy gradient rollouts.
+
+4. **Shao, Z., Wang, P., Zhu, Q., et al. (2024)**: *DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models*.
+   - **Invention of GRPO**: Introduced **Group Relative Policy Optimization (GRPO)** to overcome the memory and stability bottlenecks of PPO.
+   - **Core Insight**: PPO requires a Value Network / Critic $V_\psi(s)$ to estimate baseline state values for Generalized Advantage Estimation (GAE). The critic is typically the same size as the actor model, doubling GPU memory requirements and suffering from high value approximation error.
+   - **The GRPO Solution**: For each prompt $x$, sample a group of $G$ candidate outputs $\{y_1, y_2, \dots, y_G\}$ from the old policy $\pi_{\text{old}}$. Evaluate each output with rule-based or task-specific reward functions $R = \{R_1, \dots, R_G\}$. Compute advantages purely through intra-group normalization:
+     $$\hat{A}_i = \frac{R_i - \text{mean}(R)}{\text{std}(R) + \epsilon}$$
+   - Eliminates the critic network used by PPO-style actor-critic training. Memory savings are configuration-dependent; there is no universal 50% reduction or general performance guarantee.
+
+5. **DeepSeek-AI (2025)**: *DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning*.
+   - **Verifiable Reward Paradigm**: Demonstrated that complex multi-step reasoning emerges spontaneously when models are trained via GRPO on pure, verifiable rule-based rewards:
+     1. Accuracy Reward (deterministic correctness of answers).
+     2. Format Reward (structural enforcement of reasoning tags `<think>...</think>`).
+     3. Anti-Verbosity Penalty (preventing degenerate length-hacking).
+   - Shows that verifiable rewards can be used for the studied tasks without a learned outcome reward model. Deterministic verifiers can still be incomplete, misspecified, or exploited and should not be described as un-hackable.
+
+---
+
+### 9.2 Mathematical Derivations & Algorithmic Foundations
+
+#### (A) Bradley-Terry Pairwise Reward Modeling
+For a prompt $x$ and pair of responses $(y_w, y_l)$ where $y_w$ is preferred over $y_l$, a parameterized scalar reward model $r_\phi(x, y)$ is trained by minimizing the negative log-likelihood:
+$$\mathcal{L}_{\text{BT}}(\phi) = -\mathbb{E}_{(x, y_w, y_l) \sim \mathcal{D}} \left[ \log \sigma(r_\phi(x, y_w) - r_\phi(x, y_l)) \right]$$
+
+To ensure numerical stability and prevent reward scale explosion, an optional margin $\gamma > 0$ and $L_2$ regularization penalty are introduced:
+$$\mathcal{L}_{\text{BT-reg}}(\phi) = -\mathbb{E}_{(x, y_w, y_l)} \left[ \log \sigma(r_\phi(x, y_w) - r_\phi(x, y_l) - \gamma) \right] + \lambda_{\text{reg}} \cdot \frac{1}{2} \left( r_\phi(x, y_w)^2 + r_\phi(x, y_l)^2 \right)$$
+
+The gradient with respect to $\phi$ is:
+$$\nabla_\phi \mathcal{L}_{\text{BT}} = -\mathbb{E}_{(x, y_w, y_l)} \left[ \sigma(r_\phi(x, y_l) - r_\phi(x, y_w)) \cdot \left( \nabla_\phi r_\phi(x, y_w) - \nabla_\phi r_\phi(x, y_l) \right) \right]$$
+where the scalar error weight $\sigma(r_\phi(x, y_l) - r_\phi(x, y_w)) \in (0, 1)$ automatically down-weights pairs that the reward model already ranks correctly with high confidence.
+
+---
+
+#### (B) Direct Preference Optimization (DPO) Derivation & Dynamics
+The standard KL-regularized RL objective is:
+$$\max_{\pi} \mathbb{E}_{x \sim \mathcal{D}} \left[ \mathbb{E}_{y \sim \pi(\cdot \mid x)} [r(x, y)] - \beta \mathbb{D}_{\text{KL}}(\pi(\cdot \mid x) \parallel \pi_{\text{ref}}(\cdot \mid x)) \right]$$
+
+Expanding the expectation and KL divergence for a given prompt $x$:
+$$\max_\pi \sum_y \pi(y \mid x) r(x, y) - \beta \sum_y \pi(y \mid x) \log \frac{\pi(y \mid x)}{\pi_{\text{ref}}(y \mid x)} = -\beta \min_\pi \sum_y \pi(y \mid x) \left[ \log \frac{\pi(y \mid x)}{\pi_{\text{ref}}(y \mid x)} - \frac{1}{\beta} r(x, y) \right]$$
+
+Defining the partition function $Z(x) = \sum_y \pi_{\text{ref}}(y \mid x) \exp\left( \frac{1}{\beta} r(x, y) \right)$ and the optimal distribution:
+$$\pi^*(y \mid x) = \frac{1}{Z(x)} \pi_{\text{ref}}(y \mid x) \exp\left( \frac{1}{\beta} r(x, y) \right)$$
+
+The objective simplifies to minimizing the KL divergence between $\pi$ and $\pi^*$:
+$$\min_\pi \mathbb{D}_{\text{KL}}(\pi(\cdot \mid x) \parallel \pi^*(\cdot \mid x)) - \log Z(x)$$
+Since the minimum of a KL divergence is zero when $\pi = \pi^*$, the unique global optimum is analytically:
+$$\pi^*(y \mid x) = \frac{1}{Z(x)} \pi_{\text{ref}}(y \mid x) \exp\left( \frac{1}{\beta} r(x, y) \right)$$
+
+Taking the logarithm and solving for $r(x, y)$:
+$$r(x, y) = \beta \log \frac{\pi^*(y \mid x)}{\pi_{\text{ref}}(y \mid x)} + \beta \log Z(x)$$
+
+Now substitute this expression into the Bradley-Terry preference probability:
+$$P(y_w \succ y_l \mid x) = \sigma(r(x, y_w) - r(x, y_l)) = \sigma\left( \left( \beta \log \frac{\pi^*(y_w \mid x)}{\pi_{\text{ref}}(y_w \mid x)} + \beta \log Z(x) \right) - \left( \beta \log \frac{\pi^*(y_l \mid x)}{\pi_{\text{ref}}(y_l \mid x)} + \beta \log Z(x) \right) \right)$$
+
+The partition functions $\beta \log Z(x)$ **cancel identically**, yielding the DPO loss:
+$$\mathcal{L}_{\text{DPO}}(\theta; \pi_{\text{ref}}) = -\mathbb{E}_{(x, y_w, y_l)} \left[ \log \sigma\left( \beta \log \frac{\pi_\theta(y_w \mid x)}{\pi_{\text{ref}}(y_w \mid x)} - \beta \log \frac{\pi_\theta(y_l \mid x)}{\pi_{\text{ref}}(y_l \mid x)} \right) \right]$$
+
+Let the implicit reward be defined as:
+$$\hat{r}_\theta(x, y) = \beta \log \frac{\pi_\theta(y \mid x)}{\pi_{\text{ref}}(y \mid x)} = \beta \sum_{t=1}^{|y|} \left( \log \pi_\theta(y_t \mid x, y_{<t}) - \log \pi_{\text{ref}}(y_t \mid x, y_{<t}) \right)$$
+
+The gradient with respect to policy parameters $\theta$ reveals the exact mechanics of DPO:
+$$\nabla_\theta \mathcal{L}_{\text{DPO}}(\theta) = -\beta \, \mathbb{E}_{(x, y_w, y_l)} \left[ \underbrace{\sigma(\hat{r}_\theta(x, y_l) - \hat{r}_\theta(x, y_w))}_{\text{Dynamic Weight } w(x, y_w, y_l)} \cdot \left( \underbrace{\nabla_\theta \log \pi_\theta(y_w \mid x)}_{\text{Increase likelihood of } y_w} - \underbrace{\nabla_\theta \log \pi_\theta(y_l \mid x)}_{\text{Decrease likelihood of } y_l} \right) \right]$$
+- When the model mistakenly believes $y_l$ is better than $y_w$ ($\hat{r}_\theta(x, y_l) > \hat{r}_\theta(x, y_w)$), the dynamic weight approaches $1.0$, producing a large gradient update.
+- When the model correctly separates the pair with high margin ($\hat{r}_\theta(x, y_w) \gg \hat{r}_\theta(x, y_l)$), the weight approaches $0.0$, preventing over-optimization.
+
+---
+
+#### (C) Group Relative Policy Optimization (GRPO)
+In GRPO, the training workflow operates iteratively in groups:
+1. **Group Rollout Generation**:
+   Given a prompt $x$ from dataset $\mathcal{D}$, the current policy $\pi_\theta$ samples a group of $G$ distinct completions via nucleus or temperature sampling:
+   $$\{y_1, y_2, \dots, y_G\} \sim \pi_\theta(\cdot \mid x)$$
+
+2. **Multi-Objective Reward Evaluation**:
+   Each completion $y_i$ is evaluated by verifiable reward functions:
+   $$R_i = \text{Reward}(x, y_i) \in \mathbb{R}$$
+
+3. **Critic-Free Group Advantage Normalization**:
+   The group mean $\mu_R$ and sample standard deviation $\sigma_R$ are computed:
+   $$\mu_R = \frac{1}{G} \sum_{j=1}^G R_j, \quad \sigma_R = \sqrt{\frac{1}{G} \sum_{j=1}^G (R_j - \mu_R)^2 + \epsilon}$$
+   The standardized advantage for each sequence $y_i$ is:
+   $$\hat{A}_i = \frac{R_i - \mu_R}{\sigma_R}$$
+
+4. **Policy Ratio & Clipped Surrogate Objective**:
+   For each token $t \in \{1, \dots, |y_i|\}$, the probability ratio between the updated policy $\pi_\theta$ and the generation policy $\pi_{\text{old}}$ is:
+   $$\rho_{i,t}(\theta) = \frac{\pi_\theta(y_{i,t} \mid x, y_{i,<t})}{\pi_{\text{old}}(y_{i,t} \mid x, y_{i,<t})}$$
+
+   The PPO-clipped surrogate is computed:
+   $$\text{obj}_{i,t}^{\text{clip}}(\theta) = \min\left( \rho_{i,t}(\theta) \hat{A}_i, \, \text{clip}(\rho_{i,t}(\theta), 1 - \epsilon_{\text{clip}}, 1 + \epsilon_{\text{clip}}) \hat{A}_i \right)$$
+
+5. **Unbiased Per-Token KL Divergence Penalty**:
+   To prevent policy collapse and deviation from reference baseline $\pi_{\text{ref}}$, we employ the unbiased non-negative KL divergence estimator (Schulman, 2020):
+   $$\mathbb{D}_{\text{KL}, i, t}(\pi_\theta \parallel \pi_{\text{ref}}) = \frac{\pi_{\text{ref}}(y_{i,t} \mid x, y_{i,<t})}{\pi_\theta(y_{i,t} \mid x, y_{i,<t})} - \log \frac{\pi_{\text{ref}}(y_{i,t} \mid x, y_{i,<t})}{\pi_\theta(y_{i,t} \mid x, y_{i,<t})} - 1$$
+   Notice that this estimator satisfies $\mathbb{D}_{\text{KL}, i, t} \ge 0$ with equality iff $\pi_\theta = \pi_{\text{ref}}$, and has lower sample variance than naive log-ratio differences.
+
+6. **The Complete GRPO Loss**:
+   $$\mathcal{L}_{\text{GRPO}}(\theta) = -\frac{1}{G} \sum_{i=1}^G \frac{1}{|y_i|} \sum_{t=1}^{|y_i|} \left[ \text{obj}_{i,t}^{\text{clip}}(\theta) - \beta_{\text{KL}} \mathbb{D}_{\text{KL}, i, t}(\pi_\theta \parallel \pi_{\text{ref}}) \right]$$
+
+---
+
+#### (D) Verifiable Rule-Based Reward Synthesis
+Rather than relying on noisy neural judges during online RL, verifiable rewards use exact programmatic predicates:
+1. **Citation Grounding Reward ($R_{\text{cite}} \in [0, 1]$)**:
+   Synthesizes the Milestone 4 Phase 4.2 [`CitationVerifier`](file:///Users/jayesh/Documents/RLHF/evaluation/citation_verifier.py):
+   $$R_{\text{cite}} = \alpha_{\text{prec}} \cdot \text{CitationPrecision} + \alpha_{\text{rec}} \cdot \text{CitationRecall} + \alpha_{\text{faith}} \cdot \text{FaithfulnessScore}$$
+   If a response contains hallucinated citation tags ($[k]$ referencing nonexistent documents), a severe penalty $-0.5$ is applied.
+
+2. **Format Adherence Reward ($R_{\text{format}} \in [0, 1]$)**:
+   Verifies reasoning structure:
+   $$R_{\text{format}} = \begin{cases}
+   1.0 & \text{if contains valid matching } \texttt{<think>} \dots \texttt{</think>} \text{ followed by answer} \\
+   0.0 & \text{otherwise}
+   \end{cases}$$
+
+3. **Anti-Verbosity & Brevity Penalty ($R_{\text{len}} \in [-1, 0]$)**:
+   Prevents length hacking by penalizing sequences that exceed a target token budget $L_{\text{target}}$:
+   $$R_{\text{len}} = -\lambda_{\text{len}} \cdot \max\left(0, \frac{|y| - L_{\text{target}}}{L_{\text{target}}}\right)$$
+
+4. **Composite Reward Aggregator**:
+   $$R_{\text{total}}(x, y) = w_{\text{cite}} R_{\text{cite}} + w_{\text{format}} R_{\text{format}} + w_{\text{acc}} R_{\text{acc}} + R_{\text{len}}$$
+
+---
+
+### 9.3 System Architecture & Mermaid Pipeline Topology
+
+```mermaid
+flowchart TD
+    subgraph Inputs ["Input Datasets & Prompts"]
+        PrefData["Preference Dataset (x, y_w, y_l)"]
+        RLPrompts["Prompt Pool (x)"]
+        BaseModel["SFT Base Checkpoint (M3)"]
+        RefModel["Frozen Reference Policy pi_ref"]
+    end
+
+    subgraph Phase51 ["Phase 5.1: Pairwise BT Reward Model"]
+        RMBackbone["MiniGPT + Scalar Reward Head"]
+        BTLoss["Bradley-Terry Loss:<br/>-log sigma(r(y_w) - r(y_l))"]
+        RMEval["Reward Separability & Accuracy"]
+        RMBackbone --> BTLoss --> RMEval
+    end
+
+    subgraph Phase52 ["Phase 5.2: Direct Preference Optimization (DPO)"]
+        DPOTrainer["DPOTrainer (LoRA Enabled)"]
+        DPOLossCalc["DPO Loss:<br/>-log sigma(beta * Delta log_ratio)"]
+        ImplicitRew["Implicit Reward Margin:<br/>r(y_w) - r(y_l)"]
+        DPOTrainer --> DPOLossCalc --> ImplicitRew
+    end
+
+    subgraph Phase53 ["Phase 5.3: Verifiable Rule-Based Rewards"]
+        CiteRew["Citation Grounding (ALCE F1)"]
+        FormatRew["Format Compliance (<think>...</think>)"]
+        LenPen["Anti-Verbosity Penalty phi_len"]
+        AccRew["Fact Entailment (M4 Verifier)"]
+        MultiRew["Composite Reward Aggregator"]
+        CiteRew & FormatRew & LenPen & AccRew --> MultiRew
+    end
+
+    subgraph Phase54 ["Phase 5.4: Group Relative Policy Optimization (GRPO)"]
+        RolloutGen["Group Rollouts:<br/>{y_1, ..., y_G} ~ pi_theta(x)"]
+        GroupAdv["Critic-Free Group Advantage:<br/>A_i = (R_i - mu) / (sigma + eps)"]
+        ClippedLoss["Clipped Surrogate + Token KL"]
+        GRPOTrainer["GRPOTrainer Loop"]
+        RolloutGen --> MultiRew --> GroupAdv --> ClippedLoss --> GRPOTrainer
+    end
+
+    subgraph Phase55 ["Phase 5.5: Master Triad Evaluation & Gating"]
+        EvalBench["M4.1 Golden Benchmark Suite (30 Cases)"]
+        TriadComp["Triad Comparison: SFT vs DPO vs GRPO"]
+        StatGate["M4.4 Statistical Release Gate"]
+        DeployModel["Production Checkpoint Promotion (M6 Ready)"]
+        TriadComp --> StatGate --> DeployModel
+    end
+
+    PrefData --> Phase51 & Phase52
+    RLPrompts & BaseModel & RefModel --> Phase54
+    Phase52 --> TriadComp
+    Phase54 --> TriadComp
+    EvalBench --> TriadComp
+```
+
+---
+
+### 9.4 Milestone 5 Phased Execution Roadmap
+
+To improve implementation quality, mathematical verification, memory-mapped token loading, and test coverage, Milestone 5 is decomposed into five distinct execution phases:
+
+#### Phase 5.1: Preference Data Contracts, Pairwise Bradley-Terry Reward Modeling, & Dataset Pipeline
+- **Deliverables**:
+  - `training/m5_preference/schemas.py`: Pydantic V2 & dataclass schemas (`PreferencePairSchema`, `PreferenceSample`).
+  - `training/m5_preference/dataset.py`: `PreferenceDataset` with paired chosen/rejected ChatML collation and loss masking.
+  - `training/m5_preference/reward_model.py`: `RewardModel` architecture wrapping `MiniGPT` with pooled scalar reward head and `BradleyTerryLoss`.
+  - `training/m5_preference/reward_trainer.py`: Supervised reward model training loop with margin calibration.
+- **Verification**: Unit tests covering loss masking, Bradley-Terry gradient dynamics, margin separability, and classification accuracy.
+
+#### Phase 5.2: Direct Preference Optimization (DPO) Engine
+- **Deliverables**:
+  - `training/m5_preference/dpo_loss.py`: Numerically stable `DPOLoss` with log-sigmoid, margin offset, and implicit reward tracking.
+  - `training/m5_preference/dpo_trainer.py`: Production `DPOTrainer` with reference model caching, LoRA parameter-efficient tuning, gradient accumulation, and evaluation logging.
+- **Verification**: Unit tests verifying loss symmetry, implicit reward monotonicity ($r(y_w) > r(y_l)$), reference policy freezing, and convergence on domain preference pairs.
+
+#### Phase 5.3: Verifiable Rule-Based & Multi-Objective Reward Functions
+- **Deliverables**:
+  - `training/m5_preference/rewards/citation_reward.py`: Grounding & citation syntax verifier using M4 `CitationVerifier`.
+  - `training/m5_preference/rewards/format_reward.py`: Structural reasoning (`<think>...</think>`) and ChatML syntax validator.
+  - `training/m5_preference/rewards/length_reward.py`: Soft-threshold anti-verbosity penalty preventing length hacking.
+  - `training/m5_preference/rewards/composite.py`: Multi-objective normalized reward aggregator with customizable weights.
+- **Verification**: Unit tests for reward bounds, citation penalties, format enforcement, and length penalty monotonicity.
+
+#### Phase 5.4: Group Relative Policy Optimization (GRPO) Engine
+- **Deliverables**:
+  - `training/m5_preference/grpo_sampler.py`: Parallel group autoregressive rollout generator with nucleus/temperature controls.
+  - `training/m5_preference/grpo_loss.py`: Critic-free group advantage computation, PPO surrogate clipping, and per-token unbiased KL divergence estimation.
+  - `training/m5_preference/grpo_trainer.py`: Online RL loop with rollout buffering, group normalization, and policy gradient updates.
+- **Verification**: Unit tests for group advantage normalization ($\sum \hat{A}_i = 0$), clipping behavior, critic elimination memory verification, and policy improvement.
+
+#### Phase 5.5: Master Triad Comparative Evaluation, Gating, & Release Integration
+- **Deliverables**:
+  - `training/m5_preference/triad_evaluator.py`: Comparative harness benchmarking SFT vs DPO vs GRPO on M4.1 Golden Benchmark Suite.
+  - Integration with M4.4 `StatisticalReleaseGate` and `RollbackOrchestrator` to qualify preference-aligned checkpoints for M6 serving.
+  - Master test runner registration in `tests/run_all.py` (bringing repository test count to ~125+).
+- **Verification**: End-to-end verification showing SFT < DPO < GRPO in reasoning and citation precision with zero catastrophic forgetting on core domain baselines.
+
+---
+
+### 9.5 Phase 5.1: Preference Data Contracts, Pairwise Bradley-Terry Reward Modeling, & Dataset Pipeline
+
+#### 1. Theoretical Motivation & Foundations
+In supervised fine-tuning (Milestone 3), the model learns an unconditional distribution over demonstrations:
+$$\mathcal{L}_{\text{SFT}}(\theta) = -\sum_{t=1}^T \log \pi_\theta(y_t \mid x, y_{<t})$$
+However, standard imitation learning exhibits fundamental shortcomings:
+1. **Inability to Discriminate Degrees of Quality**: SFT treats all demonstration tokens equally, unable to represent that one plausible completion is significantly more accurate, grounded, or concise than another.
+2. **Exposure Bias & Hallucination Drift**: During autoregressive inference, small early compounding errors steer generation into out-of-distribution states that SFT cannot penalize.
+3. **Implicit Reward Modeling Foundation**: Before policy optimization algorithms (such as DPO in Phase 5.2 and GRPO in Phase 5.4) can be executed, we require a mathematically rigorous preference data representation and baseline reward model to ground preference ranking and verify reward separability.
+
+Phase 5.1 formalizes the **Pairwise Bradley-Terry Preference Pipeline**:
+- Defines strict Pydantic V2 and dataclass contracts for chosen vs rejected completion pairs.
+- Implements a vectorized, dual-sequence collator that tokenizes $(x, y_w)$ and $(x, y_l)$ under canonical ChatML delimiters with prompt masking.
+- Constructs a scalar `RewardModel` on top of the Milestone 1 `MiniGPT` transformer backbone.
+- Implements numerically stable, margin-regularized `BradleyTerryLoss` with tracking for preference classification accuracy, margin separability, and calibration.
+
+---
+
+#### 2. Mathematical Formalization & Loss Derivation
+
+```mermaid
+flowchart TD
+    subgraph Data ["Preference Pair Input"]
+        Prompt["Prompt (x)"]
+        Chosen["Chosen Completion (y_w)"]
+        Rejected["Rejected Completion (y_l)"]
+    end
+
+    subgraph Collation ["Preference Collator"]
+        SeqW["Sequence W: <|im_start|>user\nx...assistant\ny_w<|im_end|>"]
+        SeqL["Sequence L: <|im_start|>user\nx...assistant\ny_l<|im_end|>"]
+        MaskW["Last Active Token Index t_w"]
+        MaskL["Last Active Token Index t_l"]
+        SeqW --> MaskW
+        SeqL --> MaskL
+    end
+
+    subgraph Model ["RewardModel Backbone"]
+        Trans["MiniGPT Transformer (Pre-LayerNorm)"]
+        Head["Linear Reward Head: W_r in R^(d_model x 1)"]
+        H_w["Hidden State h_w at t_w"]
+        H_l["Hidden State h_l at t_l"]
+        Trans --> H_w --> Head --> R_w["Scalar Reward r(x, y_w)"]
+        Trans --> H_l --> Head --> R_l["Scalar Reward r(x, y_l)"]
+    end
+
+    subgraph LossOpt ["Bradley-Terry Loss Engine"]
+        DeltaR["Margin Delta: Delta r = r(x, y_w) - r(x, y_l)"]
+        BTLoss["Loss: -log sigma(Delta r - gamma) + lambda/2 * (r_w^2 + r_l^2)"]
+        AccCheck["Accuracy: I(r_w > r_l)"]
+        DeltaR --> BTLoss & AccCheck
+    end
+
+    Prompt & Chosen --> SeqW
+    Prompt & Rejected --> SeqL
+    MaskW --> H_w
+    MaskL --> H_l
+    R_w & R_l --> DeltaR
+```
+
+##### (A) Probabilistic Choice Model
+Let $x \in \mathcal{X}$ denote an instruction prompt, and let $y_w, y_l \in \mathcal{Y}$ denote the chosen (preferred) and rejected (dispreferred) completions respectively.
+Following the Bradley-Terry-Luce (BTL) model:
+$$P(y_w \succ y_l \mid x) = \sigma(r_\phi(x, y_w) - r_\phi(x, y_l)) = \frac{1}{1 + \exp\left(-(r_\phi(x, y_w) - r_\phi(x, y_l))\right)}$$
+
+##### (B) Margin-Regularized Bradley-Terry Loss
+To prevent unbounded reward drift and ensure a minimum confidence margin $\gamma \ge 0$, the training loss is formulated as:
+$$\mathcal{L}_{\text{BT}}(\phi) = -\mathbb{E}_{(x, y_w, y_l) \sim \mathcal{D}} \left[ \log \sigma(r_\phi(x, y_w) - r_\phi(x, y_l) - \gamma) \right] + \frac{\lambda_{\text{reg}}}{2} \left( r_\phi(x, y_w)^2 + r_\phi(x, y_l)^2 \right)$$
+
+Using the identity $\log \sigma(z) = -\log(1 + e^{-z}) = -\text{softplus}(-z)$, the loss is computed with full numerical stability (avoiding underflow for large positive $z$ and overflow for negative $z$):
+$$\mathcal{L}_{\text{BT}}(\phi) = \text{softplus}(-(r_\phi(x, y_w) - r_\phi(x, y_l) - \gamma)) + \frac{\lambda_{\text{reg}}}{2} \left( r_\phi(x, y_w)^2 + r_\phi(x, y_l)^2 \right)$$
+
+##### (C) Gradient Analysis
+The gradient of $\mathcal{L}_{\text{BT}}$ with respect to the scalar rewards is:
+$$\frac{\partial \mathcal{L}_{\text{BT}}}{\partial r_\phi(x, y_w)} = -\sigma(r_\phi(x, y_l) - r_\phi(x, y_w) + \gamma) + \lambda_{\text{reg}} r_\phi(x, y_w)$$
+$$\frac{\partial \mathcal{L}_{\text{BT}}}{\partial r_\phi(x, y_l)} = +\sigma(r_\phi(x, y_l) - r_\phi(x, y_w) + \gamma) + \lambda_{\text{reg}} r_\phi(x, y_l)$$
+
+Let the classification error be $e = \sigma(r_\phi(x, y_l) - r_\phi(x, y_w) + \gamma) \in (0, 1)$:
+- When the model severely errs ($r_\phi(x, y_w) \ll r_\phi(x, y_l)$), $e \to 1.0$, pushing chosen reward up and rejected reward down with maximum gradient.
+- When the model has already separated the pair with large margin ($r_\phi(x, y_w) \gg r_\phi(x, y_l) + \gamma$), $e \to 0.0$, causing gradients to vanish and preventing over-fitting to easy pairs.
+
+##### (D) Sequence Pooling & Reward Head
+Given input token indices $s \in \mathbb{Z}^{B \times T}$ representing the full ChatML conversation $x \circ y$:
+1. Pass $s$ through the transformer backbone:
+   $$H = \text{MiniGPT}(s) \in \mathbb{R}^{B \times T \times d_{\text{model}}}$$
+2. For each sequence $b \in \{1, \dots, B\}$, determine the index of the final non-padding token:
+   $$t_b^* = \max(\{t \in \{1, \dots, T\} : \text{mask}_{b, t} = 1\})$$
+3. Extract the pooled hidden state $h_b^* = H_{b, t_b^*} \in \mathbb{R}^{d_{\text{model}}}$.
+4. Project via the linear reward head without bias:
+   $$r_b = W_r^T h_b^* \in \mathbb{R}, \quad W_r \in \mathbb{R}^{d_{\text{model}} \times 1}$$
+
+---
+
+#### 3. Core Architecture & Class Contracts
+
+```python
+class PreferencePairSchema(BaseModel):
+    """Pydantic V2 schema for validated preference pair."""
+    prompt: str
+    chosen: str
+    rejected: str
+    margin: float = 0.0
+    category: str = "general"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+@dataclass
+class PreferenceSample:
+    """Internal dataclass representation of preference sample."""
+    prompt: str
+    chosen: str
+    rejected: str
+    margin: float = 0.0
+    category: str = "general"
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+@dataclass
+class PreferenceBatch:
+    """Collated PyTorch batch tensors for pairwise reward / preference training."""
+    chosen_input_ids: torch.Tensor       # Shape: (B, T)
+    chosen_attention_mask: torch.Tensor  # Shape: (B, T)
+    rejected_input_ids: torch.Tensor     # Shape: (B, T)
+    rejected_attention_mask: torch.Tensor # Shape: (B, T)
+
+class RewardModel(nn.Module):
+    """Transformer backbone with linear scalar reward head."""
+    def __init__(self, backbone: MiniGPT):
+        super().__init__()
+        self.backbone = backbone
+        self.reward_head = nn.Linear(backbone.config.d_model, 1, bias=False)
+
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """Compute scalar rewards for a batch of sequences.
+
+        Returns:
+            rewards: Shape (B,) scalar tensor.
+        """
+        ...
+
+class BradleyTerryLoss(nn.Module):
+    """Numerically stable margin-regularized Bradley-Terry negative log-likelihood loss."""
+    def __init__(self, margin: float = 0.0, l2_reg: float = 0.001):
+        super().__init__()
+        self.margin = margin
+        self.l2_reg = l2_reg
+
+    def forward(
+        self,
+        chosen_rewards: torch.Tensor,
+        rejected_rewards: torch.Tensor,
+    ) -> tuple[torch.Tensor, dict[str, float]]:
+        """Compute BT loss, accuracy, and margin metrics."""
+        ...
+
+class RewardTrainer:
+    """Supervised training loop for Bradley-Terry reward models."""
+    def __init__(
+        self,
+        model: RewardModel,
+        loss_fn: BradleyTerryLoss,
+        optimizer: torch.optim.Optimizer,
+        device: torch.device,
+    ):
+        ...
+
+    def train_step(self, batch: PreferenceBatch) -> dict[str, float]:
+        ...
+
+    def evaluate(self, dataloader: DataLoader) -> dict[str, float]:
+        ...
+```
+
+---
+
+#### 4. Concrete Step-by-Step Implementation Sequence for Phase 5.1
+1. **Step 5.1.1**: Update `core/schemas.py` to add `PreferencePairSchema`.
+2. **Step 5.1.2**: Implement `training/m5_preference/schemas.py` containing `PreferenceSample` with bidirectional schema conversion.
+3. **Step 5.1.3**: Implement `training/m5_preference/dataset.py` containing `PreferenceDataset` and `PreferenceCollator` supporting ChatML formatting, dual chosen/rejected tokenization, and padding.
+4. **Step 5.1.4**: Implement `training/m5_preference/reward_model.py` containing `RewardModel` and `BradleyTerryLoss`.
+5. **Step 5.1.5**: Implement `training/m5_preference/reward_trainer.py` containing `RewardTrainer` tracking accuracy, margin separability, and checkpoint saving.
+6. **Step 5.1.6**: Export all Phase 5.1 modules in `training/m5_preference/__init__.py`.
+7. **Step 5.1.7**: Implement `tests/test_m5_reward_model.py` covering:
+   - Schema serialization roundtrip (`PreferencePairSchema` $\leftrightarrow$ `PreferenceSample`).
+   - Preference collator shape verification and attention mask pooling indices.
+   - Bradley-Terry loss numerical stability and margin enforcement.
+   - RewardModel forward pass and pooling invariance to padding tokens.
+   - RewardTrainer training convergence on synthetic preference pairs (accuracy $> 90\%$, margin $> 0$).
+8. **Step 5.1.8**: Register `tests/test_m5_reward_model.py` into `tests/run_all.py` and verify 100% test pass rate across all milestones (M0–M5).
+
+---
+
+### 9.6 Phase 5.2: Direct Preference Optimization (DPO) Engine & Loss Formulation
+
+#### 1. Theoretical Foundation & Literature Survey
+Direct Preference Optimization (Rafailov et al., NeurIPS 2023) eliminates the need for fitting an explicit intermediate reward model $r_\psi(x, y)$ and performing complex reinforcement learning loops (e.g. PPO, policy gradients) by proving an analytical equivalence between the Bradley-Terry preference model and the closed-form solution to the KL-constrained RL objective.
+
+```mermaid
+flowchart TD
+    subgraph Traditional_RLHF["Traditional 3-Step RLHF (Ouyang et al., 2022)"]
+        SFT[SFT Model] --> RM_Train["Train Bradley-Terry Reward Model r_ψ"]
+        RM_Train --> PPO_Loop["Run PPO Actor-Critic Loop: π_θ vs π_ref + Value Head + Critic"]
+    end
+
+    subgraph Direct_Preference_Optimization["Direct Preference Optimization (Rafailov et al., 2023)"]
+        SFT_DPO[SFT Model π_ref] --> DPO_Direct["Implicit Reward Extraction: r(x, y) = β log(π_θ / π_ref)"]
+        DPO_Direct --> Direct_NLL["Direct NLL Loss Minimization: Closed-Form Policy Training"]
+    end
+
+    Traditional_RLHF -.->|Replaced By| Direct_Preference_Optimization
+```
+
+##### 1.1 The Classical RLHF Optimization Problem
+In standard RLHF, given prompt distribution $\mathcal{D}$, reward function $r(x, y)$, and reference policy $\pi_{\text{ref}}$, the policy optimization objective is:
+$$\max_{\pi_\theta} \mathbb{E}_{x \sim \mathcal{D}, y \sim \pi_\theta(y|x)} \left[ r(x, y) \right] - \beta \mathbb{D}_{\text{KL}}\left(\pi_\theta(y|x) \parallel \pi_{\text{ref}}(y|x)\right)$$
+where $\beta > 0$ controls the strength of the KL regularization penalty that prevents policy collapse and mode drift.
+
+##### 1.2 Closed-Form Optimal Policy Solution
+Using calculus of variations with Lagrange multipliers under the probability simplex constraint $\sum_y \pi(y|x) = 1$, the exact unnormalized solution satisfies:
+$$\pi^*(y|x) \propto \pi_{\text{ref}}(y|x) \exp\left( \frac{1}{\beta} r(x, y) \right)$$
+Normalizing by the partition function $Z(x) = \sum_y \pi_{\text{ref}}(y|x) \exp\left( \frac{1}{\beta} r(x, y) \right)$:
+$$\pi^*(y|x) = \frac{1}{Z(x)} \pi_{\text{ref}}(y|x) \exp\left( \frac{1}{\beta} r(x, y) \right)$$
+
+##### 1.3 Derivation of Implicit Reward Function
+Taking the natural logarithm of both sides:
+$$\log \pi^*(y|x) = \log \pi_{\text{ref}}(y|x) + \frac{1}{\beta} r(x, y) - \log Z(x)$$
+Rearranging for $r(x, y)$:
+$$r(x, y) = \beta \log \left(\frac{\pi^*(y|x)}{\pi_{\text{ref}}(y|x)}\right) + \beta \log Z(x)$$
+This fundamental theorem reveals that **any policy $\pi$ implicitly defines a reward function**:
+$$\hat{r}(x, y) = \beta \log \left(\frac{\pi(y|x)}{\pi_{\text{ref}}(y|x)}\right)$$
+up to a prompt-dependent baseline $\beta \log Z(x)$.
+
+##### 1.4 Substitution into Bradley-Terry Preference Probability
+Recall the Bradley-Terry preference probability for prompt $x$ and completion pair $(y_w, y_l)$:
+$$p^*(y_w \succ y_l \mid x) = \sigma\left(r^*(x, y_w) - r^*(x, y_l)\right)$$
+Substituting the analytical expression for $r(x, y)$:
+$$r^*(x, y_w) - r^*(x, y_l) = \left( \beta \log \frac{\pi^*(y_w|x)}{\pi_{\text{ref}}(y_w|x)} + \beta \log Z(x) \right) - \left( \beta \log \frac{\pi^*(y_l|x)}{\pi_{\text{ref}}(y_l|x)} + \beta \log Z(x) \right)$$
+Notice that the intractable partition function $\beta \log Z(x)$ **cancels out completely**:
+$$r^*(x, y_w) - r^*(x, y_l) = \beta \left( \log \frac{\pi^*(y_w|x)}{\pi_{\text{ref}}(y_w|x)} - \log \frac{\pi^*(y_l|x)}{\pi_{\text{ref}}(y_l|x)} \right)$$
+Therefore:
+$$p_\theta(y_w \succ y_l \mid x) = \sigma \left( \beta \log \frac{\pi_\theta(y_w|x)}{\pi_{\text{ref}}(y_w|x)} - \beta \log \frac{\pi_\theta(y_l|x)}{\pi_{\text{ref}}(y_l|x)} \right)$$
+
+##### 1.5 The DPO Objective Function
+We formulate policy optimization as maximum likelihood estimation on preference dataset $\mathcal{D}$:
+$$\mathcal{L}_{\text{DPO}}(\theta; \pi_{\text{ref}}) = - \mathbb{E}_{(x, y_w, y_l) \sim \mathcal{D}} \left[ \log \sigma \left( \beta \log \frac{\pi_\theta(y_w|x)}{\pi_{\text{ref}}(y_w|x)} - \beta \log \frac{\pi_\theta(y_l|x)}{\pi_{\text{ref}}(y_l|x)} \right) \right]$$
+
+##### 1.6 Gradient Dynamics & Self-Regularizing Weights
+Differentiating the loss with respect to parameters $\theta$:
+$$\nabla_\theta \mathcal{L}_{\text{DPO}}(\theta) = - \beta \mathbb{E}_{(x, y_w, y_l)} \left[ \sigma\left(\hat{r}_\theta(x, y_l) - \hat{r}_\theta(x, y_w)\right) \cdot \left( \nabla_\theta \log \pi_\theta(y_w|x) - \nabla_\theta \log \pi_\theta(y_l|x) \right) \right]$$
+where $\hat{r}_\theta(x, y) = \beta \log \frac{\pi_\theta(y|x)}{\pi_{\text{ref}}(y|x)}$.
+Notice the scalar weight $w(x, y_w, y_l) = \sigma(\hat{r}_\theta(x, y_l) - \hat{r}_\theta(x, y_w))$:
+- If the current model incorrectly ranks the rejected completion higher than the chosen completion ($\hat{r}_\theta(x, y_l) > \hat{r}_\theta(x, y_w)$), the gradient weight approaches $1.0$, providing maximum corrective pressure.
+- If the current model already ranks the chosen completion higher ($\hat{r}_\theta(x, y_w) \gg \hat{r}_\theta(x, y_l)$), the gradient weight vanishes toward $0.0$, preventing over-optimization and degradation of language modeling capabilities.
+
+##### 1.7 Variants & Regularization Extensions
+1. **Conservative DPO (cDPO / Label Smoothing)**:
+   In human preference annotations, annotator disagreement rates are typically 20-30%. Assuming a label corruption probability $\epsilon \in [0, 0.5)$:
+   $$\mathcal{L}_{\text{cDPO}} = - (1 - \epsilon) \log \sigma(\beta \Delta) - \epsilon \log \sigma(-\beta \Delta)$$
+   where $\Delta = \log \frac{\pi_\theta(y_w|x)}{\pi_{\text{ref}}(y_w|x)} - \log \frac{\pi_\theta(y_l|x)}{\pi_{\text{ref}}(y_l|x)}$.
+2. **Identity Preference Optimization (IPO)** (Azar et al., 2024):
+   Adds a quadratic penalty to regularize against unbounded log-ratio growth:
+   $$\mathcal{L}_{\text{IPO}} = \left( \beta \Delta - \frac{1}{2\beta} \right)^2$$
+3. **Length Normalization (SimPO style)** (Meng et al., 2024):
+   Normalizes the total sequence log-probabilities by the number of completion tokens $|y|$ to eliminate verbosity bias:
+   $$\overline{\log \pi}(y|x) = \frac{1}{|y|} \sum_{t=1}^{|y|} \log \pi(y_t \mid x, y_{<t})$$
+
+---
+
+#### 2. Sequence Token Log-Probability Extraction Pipeline
+In causal autoregressive decoders, the sequence log-probability $\log \pi(y \mid x)$ is the sum of per-token log-probabilities exclusively over completion positions:
+$$\log \pi(y \mid x) = \sum_{t = |x| + 1}^{|x| + |y|} \log P(x_t \mid x_{<t}) = \sum_{t = |x| + 1}^{|x| + |y|} \left[ \log \text{softmax}(z_{t-1})_{x_t} \right]$$
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant D as Preference Collator
+    participant M as Policy Model (π_θ)
+    participant R as Reference Model (π_ref)
+    participant L as DPOLoss
+
+    D->>M: Forward chosen & rejected sequences (x ∘ y_w, x ∘ y_l)
+    M-->>L: Policy log-probs: log π_θ(y_w|x), log π_θ(y_l|x)
+    D->>R: Forward with torch.no_grad() [or lookup cache]
+    R-->>L: Ref log-probs: log π_ref(y_w|x), log π_ref(y_l|x)
+    L->>L: Compute Implicit Rewards & BT Margin
+    L-->>M: Backward pass (∇_θ L_DPO)
+```
+
+---
+
+#### 3. Architecture & File Layout for Phase 5.2
+
+```
+training/m5_preference/
+├── __init__.py               # Phase 5.1 & Phase 5.2 exports
+├── schemas.py                # PreferenceSample & PreferenceBatch contracts
+├── dataset.py                # ChatML PreferenceCollator & PreferenceDataset
+├── reward_model.py           # RewardModel & BradleyTerryLoss (Phase 5.1)
+├── reward_trainer.py         # RewardTrainer (Phase 5.1)
+├── log_probs.py              # Sequence log-probability extractor with completion masking (Phase 5.2)
+├── dpo_loss.py               # DPOLoss, cDPO, IPO criteria with reward diagnostics (Phase 5.2)
+├── reference_model.py        # Frozen ReferenceModelEngine & Log-Prob Cache (Phase 5.2)
+└── dpo_trainer.py            # DPOTrainer with validation, KL metrics, & checkpointing (Phase 5.2)
+
+tests/
+├── test_m5_reward_model.py   # Phase 5.1 unit and integration tests (passing)
+└── test_m5_dpo.py            # Phase 5.2 comprehensive test suite (new)
+```
+
+---
+
+#### 4. Concrete Step-by-Step Implementation Sequence for Phase 5.2
+
+1. **Step 5.2.1: Log-Probability Extractor (`training/m5_preference/log_probs.py`)**:
+   - `extract_completion_log_probs(model, input_ids, labels, attention_mask)`:
+     - Vectorized forward pass through model logits.
+     - Causal shift: Logits at index $t$ predict target token at index $t+1$.
+     - Cross-entropy log-softmax gathering: $\log P(y_t) = \text{log\_softmax}(\text{logits}_t)[\text{target}_t]$.
+     - Mask filtering: Only accumulate positions where $\text{labels} \neq -100$ and $\text{attention\_mask} == 1$.
+     - Optional average length normalization for verbosity invariance.
+
+2. **Step 5.2.2: DPO Loss Formulations (`training/m5_preference/dpo_loss.py`)**:
+   - `DPOLoss(nn.Module)`:
+     - Hyperparameters: `beta` (default 0.1), `loss_type` ("sigmoid", "ipo", "cdpo"), `label_smoothing` (default 0.0), `reference_free` (default False).
+     - Implicit reward calculation: $\hat{r}_\theta(y) = \beta (\log \pi_\theta(y) - \log \pi_{\text{ref}}(y))$.
+     - Margin delta: $\Delta = \hat{r}_\theta(y_w) - \hat{r}_\theta(y_l)$.
+     - Numerically stable loss computation via `F.softplus(-\Delta)` and `F.logsigmoid`.
+     - Output metrics dictionary: `loss`, `chosen_rewards`, `rejected_rewards`, `reward_margins`, `accuracy`, and `kl_divergence`.
+
+3. **Step 5.2.3: Reference Model Engine & Caching (`training/m5_preference/reference_model.py`)**:
+   - `ReferenceModelEngine`:
+     - Wraps a frozen `MiniGPT` instance in `eval()` mode with zero parameter gradients.
+     - In-memory offline caching of reference log-probabilities $\log \pi_{\text{ref}}(y_w|x)$ and $\log \pi_{\text{ref}}(y_l|x)$ across fixed datasets to reduce VRAM consumption by 50%.
+
+4. **Step 5.2.4: DPO Trainer (`training/m5_preference/dpo_trainer.py`)**:
+   - `DPOTrainer`:
+     - Coordinates batch ingestion, joint/split forward passes, loss computation, gradient backprop with norm clipping, and optimizer step.
+     - Tracks learning curves, margin expansion, and KL divergence growth.
+     - Checkpoint saving and loading with PyTorch 2.6 safety standards.
+
+5. **Step 5.2.5: Test Suite (`tests/test_m5_dpo.py`)**:
+   - Test log-prob extraction accuracy against analytical values.
+   - Test completion masking ensuring prompt tokens do not leak into loss.
+   - Test DPO loss numerical stability with large positive and negative reward deltas.
+   - Test cDPO and IPO loss branches.
+   - Test reference caching parity (live reference model vs cached log-probs produce identical loss).
+   - Test `DPOTrainer` convergence on preference pairs (accuracy $> 80\%$, margin $> 0$).
+
+6. **Step 5.2.6: Registration & Verification**:
+   - Add `TestM5DPO` to `tests/run_all.py` and verify all tests pass with 0 regressions.
+
+---
+
+### 9.7 Phase 5.3: Proximal Policy Optimization (PPO) Actor-Critic RL Engine & Generalized Advantage Estimation (GAE)
+
+#### 1. Theoretical Foundation & Literature Survey
+While Direct Preference Optimization (DPO) optimizes offline preference datasets in closed form, online Reinforcement Learning from Human/AI Feedback via **Proximal Policy Optimization (PPO)** remains the foundational engine for exploratory policy improvement (Ouyang et al., 2022; Schulman et al., 2017). PPO enables the language model to explore completions beyond the fixed training corpus, receive step-level credit assignment, and continually optimize against dynamic reward models or verifiable execution verifiers.
+
+```mermaid
+flowchart TD
+    subgraph PPO_Rollout["1. Rollout Phase (Generation & Credit Assignment)"]
+        Prompt[Prompt x] --> Actor_Old["Actor (π_θ_old) Generates Action Sequence y = (y_1, ..., y_T)"]
+        Actor_Old --> Ref_Model["Reference Model (π_ref): Token Log-Probs"]
+        Actor_Old --> RM["Reward Model (r_ψ): Sequence Reward R(x, y)"]
+        Actor_Old --> Critic_Old["Critic (V_ϕ_old): Step-Level Value Predictions V(s_t)"]
+        RM --> Reward_Combine["Combine Sequence Reward + Token KL Penalty: r_t = -β(log π_old - log π_ref)"]
+        Reward_Combine --> GAE_Compute["Compute GAE-λ Advantages A_t and Target Returns R_t"]
+    end
+
+    subgraph PPO_Optimization["2. Optimization Phase (K Epochs on Mini-Batches)"]
+        GAE_Compute --> Rollout_Buffer["PPORolloutBuffer (Tensors: x, y, logp_old, V_old, A_t, R_t)"]
+        Rollout_Buffer --> Policy_Update["Actor Update: Clipped Surrogate Objective L_CLIP(θ)"]
+        Rollout_Buffer --> Critic_Update["Critic Update: Clipped Value Loss L_VF(ϕ)"]
+        Rollout_Buffer --> Entropy_Bonus["Entropy Regularization: S[π_θ]"]
+    end
+
+    Policy_Update --> Next_Iteration["Updated Actor π_θ -> Set π_θ_old = π_θ"]
+    Critic_Update --> Next_Iteration
+```
+
+##### 1.1 The Autoregressive LLM Markov Decision Process (MDP)
+We formulate generative text completion as an episodic Markov Decision Process $\langle \mathcal{S}, \mathcal{A}, \mathcal{P}, \mathcal{R}, \gamma \rangle$:
+- **State $s_t$**: The prompt $x$ concatenated with all previously generated tokens $y_{<t}$:
+  $$s_t = (x_1, \dots, x_{|x|}, y_1, \dots, y_{t-1})$$
+- **Action $a_t$**: The discrete token $y_t \in \mathcal{V}$ sampled from the policy distribution $\pi_\theta(a_t \mid s_t)$.
+- **Transition Dynamics $\mathcal{P}(s_{t+1} \mid s_t, a_t)$**: Deterministic string concatenation: $s_{t+1} = (s_t, a_t)$.
+- **Reward Function $\mathcal{R}(s_t, a_t)$**:
+  To prevent the policy from degenerating into gibberish or exploiting the reward model ("reward hacking"), a per-token KL divergence penalty is applied relative to the reference policy $\pi_{\text{ref}}$ (Ziegler et al., 2019; Ouyang et al., 2022):
+  $$r_t = \begin{cases} -\beta \left( \log \pi_\theta(a_t \mid s_t) - \log \pi_{\text{ref}}(a_t \mid s_t) \right) & \text{if } t < T \\ R(x, y) - \beta \left( \log \pi_\theta(a_T \mid s_T) - \log \pi_{\text{ref}}(a_T \mid s_T) \right) & \text{if } t = T \end{cases}$$
+  where $R(x, y)$ is the scalar score from the trained Reward Model (or verifier), and $\beta > 0$ is the KL penalty multiplier.
+
+##### 1.2 Generalized Advantage Estimation (GAE-$\lambda$)
+Credit assignment across multi-token completions is computed using Generalized Advantage Estimation (Schulman et al., ICLR 2016).
+Define the temporal difference (TD) residual at step $t \in [1, T]$:
+$$\delta_t^V = r_t + \gamma V_\phi(s_{t+1}) - V_\phi(s_t)$$
+where $V_\phi(s_{T+1}) \equiv 0$ for terminal states.
+
+The GAE-$\lambda$ advantage estimator is the exponentially weighted average of $k$-step advantages:
+$$\hat{A}_t^{\text{GAE}(\gamma, \lambda)} = \sum_{l=0}^{T - t} (\gamma \lambda)^l \delta_{t+l}^V$$
+In practice, this is computed backward from $t = T$ down to $1$ via the recursive relation:
+$$\hat{A}_t = \delta_t^V + (\gamma \lambda) \hat{A}_{t+1}$$
+Target returns for training the Critic network are:
+$$\hat{R}_t = \hat{A}_t + V_\phi(s_t)$$
+
+##### 1.3 Advantage Normalization Invariant
+To stabilize optimization across varying prompt complexities and completions of different lengths, advantages are normalized across active token positions in the mini-batch:
+$$\hat{A}_t^{\text{norm}} = \frac{\hat{A}_t - \mu_{\hat{A}}}{\sigma_{\hat{A}} + 10^{-8}}$$
+
+##### 1.4 Clipped Surrogate Policy Objective ($L^{\text{CLIP}}$)
+To prevent destructive policy updates that move too far from the data generation distribution $\pi_{\text{old}}$, PPO clips the probability ratio:
+$$r_t(\theta) = \frac{\pi_\theta(a_t \mid s_t)}{\pi_{\text{old}}(a_t \mid s_t)} = \exp\left( \log \pi_\theta(a_t \mid s_t) - \log \pi_{\text{old}}(a_t \mid s_t) \right)$$
+The clipped surrogate objective is:
+$$L^{\text{CLIP}}(\theta) = \hat{\mathbb{E}}_t \left[ \min\left( r_t(\theta) \hat{A}_t^{\text{norm}}, \text{clip}\left( r_t(\theta), 1 - \epsilon, 1 + \epsilon \right) \hat{A}_t^{\text{norm}} \right) \right]$$
+where $\epsilon \in (0, 0.3)$ is the clipping threshold (typically $0.2$).
+The $\min$ operator takes the pessimistic lower bound, ensuring that if an action has positive advantage ($\hat{A}_t > 0$), the ratio cannot increase past $1 + \epsilon$; if it has negative advantage ($\hat{A}_t < 0$), the ratio cannot decrease below $1 - \epsilon$.
+
+##### 1.5 Value Function Loss with Clipping ($L^{\text{VF}}$)
+Similarly, the value function $V_\phi$ is updated with squared error, optionally clipped to prevent large critic shifts (Engstrom et al., 2020):
+$$L^{\text{VF}}(\phi) = \frac{1}{2} \hat{\mathbb{E}}_t \left[ \max\left( \left(V_\phi(s_t) - \hat{R}_t\right)^2, \left(V_{\text{old}}(s_t) + \text{clip}\left(V_\phi(s_t) - V_{\text{old}}(s_t), -\epsilon_v, \epsilon_v\right) - \hat{R}_t\right)^2 \right) \right]$$
+
+##### 1.6 Policy Entropy Regularization
+To encourage exploration and prevent premature convergence of policy attention heads, an entropy bonus is added:
+$$S[\pi_\theta](s_t) = - \sum_{a \in \mathcal{V}} \pi_\theta(a \mid s_t) \log \pi_\theta(a \mid s_t)$$
+Total composite PPO loss minimized by gradient descent:
+$$L^{\text{PPO}}(\theta, \phi) = - L^{\text{CLIP}}(\theta) + c_1 L^{\text{VF}}(\phi) - c_2 \hat{\mathbb{E}}_t\left[ S[\pi_\theta](s_t) \right]$$
+
+---
+
+#### 2. Architecture & File Layout for Phase 5.3
+
+```
+training/m5_preference/
+├── __init__.py               # Phase 5.1, 5.2, & 5.3 exports
+├── schemas.py                # PreferenceSample, PreferenceBatch, PPORolloutBatch
+├── dataset.py                # ChatML PreferenceCollator & PreferenceDataset
+├── reward_model.py           # RewardModel & BradleyTerryLoss
+├── reward_trainer.py         # RewardTrainer
+├── log_probs.py              # Sequence log-probability extractor
+├── dpo_loss.py               # DPOLoss, cDPO, IPO criteria
+├── reference_model.py        # ReferenceModelEngine & Log-Prob Cache
+├── dpo_trainer.py            # DPOTrainer
+├── critic.py                 # ValueHead & CriticModel architecture (Phase 5.3)
+├── gae.py                    # GAE-λ calculator & PPORolloutBuffer (Phase 5.3)
+├── ppo_loss.py               # PPOLoss criterion: Clipped Actor, Clipped Critic, Entropy (Phase 5.3)
+└── ppo_trainer.py            # PPOTrainer with rollout, epoch training, & metrics (Phase 5.3)
+
+tests/
+├── test_m5_reward_model.py   # Phase 5.1 tests (passing)
+├── test_m5_dpo.py            # Phase 5.2 tests (passing)
+└── test_m5_ppo.py            # Phase 5.3 comprehensive test suite (new)
+```
+
+---
+
+#### 3. Concrete Step-by-Step Implementation Sequence for Phase 5.3
+
+1. **Step 5.3.1: Critic Model (`training/m5_preference/critic.py`)**:
+   - `ValueHead`: Scalar linear projection $W_v \in \mathbb{R}^{d_{\text{model}} \times 1}$ mapping transformer hidden states $h_t \mapsto V(s_t)$.
+   - `CriticModel`: Wraps `MiniGPT` backbone and produces sequence-level values of shape $(B, T)$ for each token position.
+   - `device` property and weight initialization with standard normal scaling.
+
+2. **Step 5.3.2: GAE Engine & Rollout Buffer (`training/m5_preference/gae.py`)**:
+   - `compute_gae_advantages(rewards, values, masks, gamma=1.0, lam=0.95)`:
+     - Vectorized backward pass computing TD residuals $\delta_t^V = r_t + \gamma V(s_{t+1}) - V(s_t)$.
+     - Recursive advantage accumulation $\hat{A}_t = \delta_t^V + \gamma \lambda \hat{A}_{t+1}$.
+     - Return computation $\hat{R}_t = \hat{A}_t + V(s_t)$.
+     - Advantage batch normalization over active tokens (`mask == 1`).
+   - `PPORolloutBatch`: Typed dataclass encapsulating input IDs, attention masks, old log-probs, old values, normalized advantages, target returns, and action masks.
+   - `PPORolloutBuffer`: Collection and mini-batch chunking container.
+
+3. **Step 5.3.3: PPO Loss Criterion (`training/m5_preference/ppo_loss.py`)**:
+   - `PPOLoss`:
+     - Hyperparameters: `clip_ratio` (default 0.2), `clip_value` (default 0.2), `vf_coef` (default 0.5), `entropy_coef` (default 0.01).
+     - Ratio computation: $\rho_t = \exp(\log \pi_\theta - \log \pi_{\text{old}})$.
+     - Surrogate objective: $\min(\rho_t \hat{A}_t, \text{clip}(\rho_t, 1-\epsilon, 1+\epsilon) \hat{A}_t)$.
+     - Value function loss with clipping: $\frac{1}{2} \max((V - R)^2, (V_{\text{old}} + \text{clip}(V - V_{\text{old}}, -\epsilon_v, \epsilon_v) - R)^2)$.
+     - Policy entropy calculation.
+     - Diagnostics: `actor_loss`, `critic_loss`, `entropy`, `clip_fraction`, `approx_kl`.
+
+4. **Step 5.3.4: PPO Actor-Critic Trainer (`training/m5_preference/ppo_trainer.py`)**:
+   - `PPOTrainer`:
+     - Coordinates Actor (`MiniGPT`) and Critic (`CriticModel`), Reference Model, and Reward Model.
+     - `generate_rollout(prompts)`: Autoregressive sampling, log-prob extraction, Critic value estimation, Reward Model scoring, and GAE calculation.
+     - `train_step(rollout_batch)`: Multi-epoch mini-batch PPO optimization with gradient norm clipping and separate or joint optimizers.
+     - Safe checkpointing and loading for both Actor and Critic networks.
+
+5. **Step 5.3.5: Comprehensive Unit & Integration Test Suite (`tests/test_m5_ppo.py`)**:
+   - Test Critic forward pass output shapes $(B, T)$.
+   - Test GAE advantage and return computation against analytical manual verification.
+   - Test GAE recursive boundary condition at terminal token.
+   - Test PPO ratio clipping bounds ($1-\epsilon, 1+\epsilon$) preventing gradient explosion.
+   - Test Critic value clipping branch.
+   - Test entropy bonus calculation.
+   - Test `PPOTrainer` optimization step and metric convergence.
+
+6. **Step 5.3.6: Master Test Runner Registration (`tests/run_all.py`)**:
+   - Register `TestM5PPO` into `tests/run_all.py` and verify 100% test pass rate across all repository milestones.
+
+---
+
+### 9.8 Phase 5.4: Group Relative Policy Optimization (GRPO - DeepSeek-R1 Style) Engine & Verifiable Rewards
+
+#### 1. Theoretical Foundation & Literature Survey
+Group Relative Policy Optimization (GRPO), introduced in **DeepSeekMath** (Shao et al., 2024) and foundational to **DeepSeek-R1** (Guo et al., 2025), fundamentally reimagines Reinforcement Learning for Large Language Models by eliminating the separate Critic value network $V_\phi$ used in traditional PPO.
+
+```mermaid
+flowchart TD
+    subgraph Traditional_PPO["Traditional PPO (Ouyang et al., 2022)"]
+        P_Prompt[Prompt q] --> Actor_PPO["Actor Model π_θ"]
+        P_Prompt --> Critic_PPO["Separate Critic Network V_ϕ (Massive VRAM Overhead)"]
+        Actor_PPO --> Single_Gen["Generate 1 Completion o"]
+        Critic_PPO --> GAE_PPO["Compute Step-Level GAE-λ Advantages"]
+    end
+
+    subgraph DeepSeek_GRPO["DeepSeek GRPO (Shao et al., 2024; Guo et al., 2025)"]
+        G_Prompt[Prompt q] --> Group_Gen["Sample Group of G Completions: {o_1, o_2, ..., o_G} ~ π_θ_old(q)"]
+        Group_Gen --> Verifier["Verifiable Rule-Based Rewards (Format & Accuracy) R_1, ..., R_G"]
+        Verifier --> Group_Norm["Group-Relative Advantage Normalization: A_i = (R_i - mean(R)) / (std(R) + ε)"]
+        Group_Norm --> Clipped_GRPO["Optimize Clipped Surrogate Objective with Unbiased KL Estimator"]
+    end
+
+    Traditional_PPO -.->|Critic-Free Architecture| DeepSeek_GRPO
+```
+
+##### 1.1 Why Eliminate the Critic Network?
+In standard PPO (Phase 5.3):
+1. **Memory Overhead**: The Critic network $V_\phi$ has comparable parameter count to the Actor $\pi_\theta$. In distributed training, hosting both Actor and Critic (alongside Reference Model and Reward Model) consumes excessive GPU VRAM.
+2. **Value Approximation Error**: Learning token-level values for reasoning tasks with long chains-of-thought is notoriously unstable. Value prediction drift frequently leads to high-variance advantage estimates that destabilize policy gradient descent.
+
+##### 1.2 Group-Relative Advantage Estimation
+Instead of learning a parametric state-value baseline $V_\phi(s_t)$, GRPO samples a **group of $G$ candidate outputs** $\{o_1, o_2, \dots, o_G\}$ for each question $q$ from the behavior policy $\pi_{\theta_{\text{old}}}$:
+$$\{o_1, o_2, \dots, o_G\} \sim \pi_{\theta_{\text{old}}}(\cdot \mid q)$$
+
+Each candidate $o_i$ receives a sequence-level reward $R_i$. The baseline is computed directly from the empirical mean and standard deviation of the group:
+$$\bar{R} = \frac{1}{G} \sum_{i=1}^G R_i, \quad \sigma_R = \sqrt{\frac{1}{G} \sum_{i=1}^G (R_i - \bar{R})^2}$$
+
+The **Group-Relative Advantage** $\hat{A}_i$ for candidate $o_i$ is defined as:
+$$\hat{A}_i = \frac{R_i - \bar{R}}{\sigma_R + 10^{-8}}$$
+Properties:
+- **Zero-Sum Group Baseline**: $\sum_{i=1}^G \hat{A}_i = 0$.
+- **Self-Balancing**: If all completions in a group achieve identical reward (e.g. all correct or all incorrect), $\sigma_R \to 0 \implies \hat{A}_i = 0$, producing zero gradient updates and preventing noise amplification.
+- **Credit Assignment**: High-scoring solutions within the group receive positive advantage ($\hat{A}_i > 0$), while low-scoring solutions receive negative advantage ($\hat{A}_i < 0$), driving relative self-improvement.
+
+##### 1.3 The GRPO Objective Function
+The clipped surrogate objective for GRPO across prompt distribution $\mathcal{D}$ is:
+$$\mathcal{J}_{\text{GRPO}}(\theta) = \mathbb{E}_{q \sim \mathcal{D}, \{o_i\}_{i=1}^G \sim \pi_{\theta_{\text{old}}}(q)} \left[ \frac{1}{G} \sum_{i=1}^G \frac{1}{|o_i|} \sum_{t=1}^{|o_i|} \left( \min\left( \rho_{i,t}(\theta) \hat{A}_i, \text{clip}\left(\rho_{i,t}(\theta), 1 - \epsilon, 1 + \epsilon \right) \hat{A}_i \right) - \beta \mathbb{D}_{\text{KL}}\left(\pi_\theta \parallel \pi_{\text{ref}}\right) \right) \right]$$
+where the probability ratio is:
+$$\rho_{i,t}(\theta) = \frac{\pi_\theta(o_{i,t} \mid q, o_{i,<t})}{\pi_{\theta_{\text{old}}}(o_{i,t} \mid q, o_{i,<t})}$$
+
+##### 1.4 Unbiased Non-Negative KL Divergence Estimator
+To prevent policy drift away from the reference policy $\pi_{\text{ref}}$, DeepSeek-R1 employs the unbiased non-negative KL estimator (Schulman, 2020):
+$$\mathbb{D}_{\text{KL}}\left(\pi_\theta \parallel \pi_{\text{ref}}\right) = \frac{\pi_{\text{ref}}(o_{i,t} \mid q, o_{i,<t})}{\pi_\theta(o_{i,t} \mid q, o_{i,<t})} - \log \frac{\pi_{\text{ref}}(o_{i,t} \mid q, o_{i,<t})}{\pi_\theta(o_{i,t} \mid q, o_{i,<t})} - 1$$
+Let $u = \frac{\pi_{\text{ref}}}{\pi_\theta} = \exp(\log \pi_{\text{ref}} - \log \pi_\theta)$.
+Then:
+$$\mathbb{D}_{\text{KL}} = u - \log u - 1$$
+By convex analysis, $u - \log u - 1 \ge 0$ for all $u > 0$, with equality if and only if $u = 1$ ($\pi_\theta = \pi_{\text{ref}}$). This eliminates the negative KL anomalies common with naive log-ratio approximations.
+
+##### 1.5 Rule-Based Verifiable Rewards
+DeepSeek-R1 demonstrated that reasoning capabilities (math, code, logic) emerge most cleanly when neural reward models (which are vulnerable to reward hacking) are replaced with **verifiable rule-based reward functions**:
+1. **Format Reward ($R_{\text{format}}$)**:
+   Enforces structural reasoning tags:
+   $$\text{Format: } \langle\text{think}\rangle \dots \langle/\text{think}\rangle \langle\text{answer}\rangle \dots \langle/\text{answer}\rangle$$
+   $$R_{\text{format}} = \begin{cases} 1.0 & \text{if both tags exist and are non-empty and well-ordered} \\ 0.0 & \text{otherwise} \end{cases}$$
+2. **Accuracy Reward ($R_{\text{acc}}$)**:
+   Extracts candidate answer $a_{\text{pred}}$ from within $\langle\text{answer}\rangle \dots \langle/\text{answer}\rangle$ or $\text{\boxed{\dots}}$ and compares against ground truth $a^*$:
+   $$R_{\text{acc}} = \begin{cases} 1.0 & \text{if } \text{normalize}(a_{\text{pred}}) == \text{normalize}(a^*) \\ 0.0 & \text{otherwise} \end{cases}$$
+3. **Composite Verifiable Reward**:
+   $$R_i = w_{\text{format}} \cdot R_{\text{format}} + w_{\text{acc}} \cdot R_{\text{acc}}$$
+
+---
+
+#### 2. Architecture & File Layout for Phase 5.4
+
+```
+training/m5_preference/
+├── __init__.py               # Phase 5.1 - 5.4 exports
+├── schemas.py                # PreferenceSample, PreferenceBatch, GRPOGroupBatch
+├── verifiable_reward.py      # Format & Accuracy VerifiableRewardEngine (Phase 5.4)
+├── grpo_loss.py              # GRPOLoss: Group Advantage, Clipped Ratio, DeepSeek KL (Phase 5.4)
+└── grpo_trainer.py           # GRPOTrainer: Group sampling, trajectory scoring, optimization (Phase 5.4)
+
+tests/
+├── test_m5_reward_model.py   # Phase 5.1 tests (passing)
+├── test_m5_dpo.py            # Phase 5.2 tests (passing)
+├── test_m5_ppo.py            # Phase 5.3 tests (passing)
+└── test_m5_grpo.py           # Phase 5.4 comprehensive test suite (new)
+```
+
+---
+
+#### 3. Concrete Step-by-Step Implementation Sequence for Phase 5.4
+
+1. **Step 5.4.1: Verifiable Reward Engine (`training/m5_preference/verifiable_reward.py`)**:
+   - `VerifiableRewardEngine`:
+     - `compute_format_reward(completion)`: Validates `<think>...</think><answer>...</answer>` tags.
+     - `extract_answer(completion)`: Extracts contents of `<answer>` or `\boxed{}`.
+     - `compute_accuracy_reward(completion, ground_truth)`: Normalizes and verifies exact/numerical match.
+     - `score_completion(completion, ground_truth)`: Returns composite reward and breakdown.
+
+2. **Step 5.4.2: GRPO Loss Criterion (`training/m5_preference/grpo_loss.py`)**:
+   - `compute_group_advantages(rewards, group_size)`: Computes $\hat{A}_i = \frac{R_i - \mu_R}{\sigma_R + 10^{-8}}$ for each group.
+   - `GRPOLoss`:
+     - Computes token ratio $\rho_{i,t} = \exp(\log \pi_\theta - \log \pi_{\text{old}})$.
+     - Clipped surrogate: $\min(\rho_{i,t}\hat{A}_i, \text{clip}(\rho_{i,t}, 1-\epsilon, 1+\epsilon)\hat{A}_i)$.
+     - DeepSeek unbiased KL penalty: $\beta (u - \log u - 1)$.
+     - Completion length normalization $\frac{1}{|o_i|}$.
+
+3. **Step 5.4.3: GRPOTrainer (`training/m5_preference/grpo_trainer.py`)**:
+   - `GRPOGroupBatch`: Dataclass containing input IDs, attention masks, action masks, old log-probs, ref log-probs, advantages, and rewards.
+   - `GRPOTrainer`:
+     - Coordinates Actor and frozen Reference Model.
+     - Groups completions $G$ per prompt.
+     - Evaluates rewards via `VerifiableRewardEngine`.
+     - Multi-step mini-batch training with gradient clipping and checkpoint saving.
+
+4. **Step 5.4.4: Export & Test Suite (`tests/test_m5_grpo.py`)**:
+   - Test format and accuracy verification on valid, malformed, and edge-case completions.
+   - Test group advantage normalization properties ($\sum A_i = 0$, $\sigma = 1$).
+   - Test DeepSeek unbiased KL non-negativity ($u - \log u - 1 \ge 0$).
+   - Test GRPOLoss ratio clipping bounds.
+   - Test `GRPOTrainer` convergence on reasoning tasks.
+
+5. **Step 5.4.5: Master Test Runner Registration (`tests/run_all.py`)**:
+   - Register `TestM5GRPO` and verify 100% test pass rate across all milestones.
+
+---
+
+### 9.9 Phase 5.5: Unified Alignment Benchmark Suite, Dynamic Engine Selection, & Full System Integration
+
+#### 1. Theoretical Foundation & Comparative Analysis of Alignment Paradigms
+Modern post-training alignment encompasses multiple distinct methodologies with contrasting trade-offs across sample efficiency, VRAM requirements, and robustness against reward hacking:
+
+```mermaid
+flowchart TD
+    subgraph Alignment_Taxonomy["Post-Training Alignment Paradigm Comparison"]
+        SFT_Base[Base SFT Model] --> Choice{Select Alignment Strategy}
+
+        Choice -->|Offline Fixed Preferences| DPO_Path["Direct Preference Optimization (DPO)<br/>• Closed-form NLL loss<br/>• 0 Critic overhead<br/>• Fast convergence<br/>• Vulnerable to length bias"]
+        Choice -->|Separate Reward Signal| RM_Path["Bradley-Terry Reward Model (RM)<br/>• Dense scalar supervision<br/>• Padding-invariant terminal pooling<br/>• Regularized against score drift"]
+        Choice -->|Online Exploratory RL| PPO_Path["PPO Actor-Critic (OpenAI style)<br/>• Step-level GAE credit assignment<br/>• Separate Value Critic V_ϕ<br/>• High VRAM footprint (~2x Actor)<br/>• Flexible reward combinations"]
+        Choice -->|Reasoning & Verifiable Tasks| GRPO_Path["DeepSeek-R1 GRPO<br/>• Critic-free group baseline<br/>• 50% lower VRAM than PPO<br/>• Rule-based verifiable rewards<br/>• Unbiased non-negative KL"]
+    end
+```
+
+| Metric / Attribute | SFT Baseline | Bradley-Terry RM | Direct Preference (DPO) | PPO Actor-Critic | DeepSeek GRPO |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Primary Objective** | Token NLL | Margin Ranking NLL | Closed-form Policy NLL | Clipped Advantage | Group-Relative Clipped |
+| **Active Models in Memory** | 1 (Model) | 1 (RM Backbone + Head) | 2 (Policy + Frozen Ref) | 4 (Actor + Critic + Ref + RM) | 2 (Actor + Frozen Ref) |
+| **Critic Network Required?** | No | No | No | **Yes ($V_\phi$)** | **No (Critic-Free)** |
+| **Reward Signal** | None | Pairwise Ground Truth | Implicit $\beta \log(\pi / \pi_{\text{ref}})$ | Dynamic Token KL + RM | Rule-Based / Verifiable |
+| **VRAM Footprint** | $1\times$ | $1\times$ | $1.2\times$ (cached ref: $1\times$) | $2.5\times - 3\times$ | $1.2\times$ |
+| **Best Suited For** | Initial Instruction Following | Preference Scoring | General Conversational Chat | Complex Multi-Modal RL | Math, Code, Logic Reasoning |
+
+##### 1.1 Multi-Paradigm Alignment Evaluation Metrics
+To rigorously evaluate candidate models aligned via different paradigms against the base model:
+1. **Pairwise Win Rate ($W$)**: Evaluated via M4 LLM Judge across paired presentations:
+   $$W = \frac{N_{\text{wins}} + 0.5 \cdot N_{\text{ties}}}{N_{\text{total}}}$$
+2. **Format Compliance Rate ($C_{\text{format}}$)**: Fraction of responses strictly complying with XML reasoning tags (`<think>...</think><answer>...</answer>`).
+3. **Verifiable Accuracy Rate ($A_{\text{verif}}$)**: Fraction of reasoning answers matching ground truth.
+4. **Policy Divergence ($\mathbb{D}_{\text{KL}}$)**: Empirical KL divergence from the reference anchor, preventing catastrophic forgetting of base pretraining knowledge.
+5. **Statistical Promotion Gating**: Edwards-corrected McNemar discordance test and paired bootstrap confidence intervals (integrated with Milestone 4) determining whether the candidate model warrants golden promotion.
+
+---
+
+#### 2. Architecture & File Layout for Phase 5.5
+
+```
+training/m5_preference/
+├── __init__.py               # Complete Milestone 5 exports
+├── schemas.py                # Preference contracts & batch schemas
+├── dataset.py                # ChatML PreferenceCollator & PreferenceDataset
+├── reward_model.py           # RewardModel & BradleyTerryLoss
+├── reward_trainer.py         # RewardTrainer
+├── log_probs.py              # Sequence log-probability extractor
+├── dpo_loss.py               # DPOLoss, cDPO, IPO criteria
+├── reference_model.py        # ReferenceModelEngine & Log-Prob Cache
+├── dpo_trainer.py            # DPOTrainer
+├── critic.py                 # ValueHead & CriticModel architecture
+├── gae.py                    # GAE-λ engine & PPORolloutBuffer
+├── ppo_loss.py               # PPOLoss criterion (Clipped Actor & Critic)
+├── ppo_trainer.py            # PPOTrainer
+├── verifiable_reward.py      # VerifiableRewardEngine (Format & Accuracy)
+├── grpo_loss.py              # GRPOLoss (Group Advantage & DeepSeek KL)
+├── grpo_trainer.py           # GRPOTrainer
+├── alignment_engine.py       # Dynamic AlignmentEngine factory (Phase 5.5)
+└── benchmark_suite.py        # Unified AlignmentBenchmarkSuite (Phase 5.5)
+
+tests/
+├── test_m5_reward_model.py   # Phase 5.1 tests (passing)
+├── test_m5_dpo.py            # Phase 5.2 tests (passing)
+├── test_m5_ppo.py            # Phase 5.3 tests (passing)
+├── test_m5_grpo.py           # Phase 5.4 tests (passing)
+└── test_m5_alignment_suite.py # Phase 5.5 comprehensive suite (new)
+```
+
+---
+
+#### 3. Concrete Step-by-Step Implementation Sequence for Phase 5.5
+
+1. **Step 5.5.1: Dynamic Alignment Engine Factory (`training/m5_preference/alignment_engine.py`)**:
+   - `AlignmentStrategy`: Enum containing `REWARD_MODEL`, `DPO`, `PPO`, and `GRPO`.
+   - `AlignmentEngine`:
+     - Factory method `create_trainer(strategy, model, config, ...)` instantiating the appropriate trainer (`RewardTrainer`, `DPOTrainer`, `PPOTrainer`, or `GRPOTrainer`) with unified interface.
+     - Automatically validates configuration parameters and configures optimizers.
+
+2. **Step 5.5.2: Unified Alignment Benchmark Suite (`training/m5_preference/benchmark_suite.py`)**:
+   - `AlignmentBenchmarkSuite`:
+     - Evaluates candidate models across standardized reasoning, dialogue, and preference benchmarks.
+     - Computes Format Compliance, Verifiable Accuracy, and Pairwise Win Rates against SFT baselines.
+     - Integrates with Milestone 4 `StatisticalGatingEngine` to issue `PROCEED_DEPLOY`, `BLOCK_RELEASE`, or `TRIGGER_ROLLBACK`.
+
+3. **Step 5.5.3: Module Exports (`training/m5_preference/__init__.py`)**:
+   - Expose `AlignmentStrategy`, `AlignmentEngine`, and `AlignmentBenchmarkSuite`.
+
+5. **Step 5.5.5: Master Test Runner Registration (`tests/run_all.py`)**:
+   - Register `TestM5AlignmentSuite` and verify 100% test pass rate across all milestones (M0 through M5).
+
+---
+
+# Step 10: Milestone 6 — Autonomous Continual Learning Loop Orchestrator, Hybrid Retrieval, & Serving Gateway
+
+#### 1. Theoretical Foundation & Literature Survey
+Milestone 6 integrates all previous capabilities (M0 hardware contracts, M1 MiniGPT, M2 web scraping & MinHash, M3 SFT & LoRA, M4 evaluation & statistical gating, M5 alignment & verifiable rewards) into an **autonomous, closed-loop continual learning system**.
+
+```mermaid
+flowchart TD
+    subgraph Client_Serving["1. Client Query & Hybrid Retrieval (FastAPI Gateway)"]
+        UserQuery[User Query q] --> Gateway[FastAPI Gateway /query]
+        Gateway --> HybridRetriever["Hybrid Retrieval Engine: BM25 Lexical + Dense Cosine Embedding"]
+        HybridRetriever --> RRF[Reciprocal Rank Fusion RRF]
+        RRF --> ActiveLLM[Active Serving LLM MiniGPT / Ollama]
+        ActiveLLM --> UserResponse[Streamed Response to User]
+        UserQuery --> QueryTrigger{New Knowledge Needed?}
+    end
+
+    subgraph Autonomous_Ingestion["2. Ingestion & Experience Replay Buffer"]
+        QueryTrigger -->|Yes| Ingestion[M2 Async Web Scraper DuckDuckGo/Trafilatura]
+        Ingestion --> Curation[M2 MinHash LSH 80% Deduplication]
+        Curation --> ReplayBuffer["Experience Replay Buffer: 70% Golden Anchor / 30% Fresh Web Data"]
+    end
+
+    subgraph Autonomous_Post_Training["3. Continual Training & Statistical Gating"]
+        ReplayBuffer --> EngineSelector["M5 Dynamic AlignmentEngine: SFT / DPO / GRPO"]
+        EngineSelector --> TrainCandidate[Train Candidate Model θ_cand]
+        TrainCandidate --> M4Judge[M4 LLM Judge & Citation Verifier]
+        M4Judge --> M4Gate[M4 Statistical Gating Engine: Bootstrap CI & McNemar]
+    end
+
+    subgraph Release_HotSwap["4. Zero-Downtime Deployment & Safety Rollback"]
+        M4Gate --> Decision{Gate Decision}
+        Decision -->|PROCEED_DEPLOY| HotSwap[Atomic Hot-Swap: Deploy θ_cand as latest active serving]
+        Decision -->|BLOCK_RELEASE| Hold[Retain Current Anchor θ_active]
+        Decision -->|TRIGGER_ROLLBACK| Rollback[RollbackOrchestrator: Hot-Swap back to Golden Anchor]
+    end
+
+    HotSwap --> ActiveLLM
+    Rollback --> ActiveLLM
+```
+
+##### 1.1 The Mathematics of Continual Learning & Catastrophic Forgetting
+When an autoregressive model $\theta$ is fine-tuned sequentially on a non-stationary stream of new data $\mathcal{D}_{\text{new}}$, standard gradient descent minimizes empirical risk strictly on $\mathcal{D}_{\text{new}}$, inducing catastrophic forgetting of earlier capabilities (McCloskey & Cohen, 1989; French, 1999):
+$$\theta_{k+1} = \arg\min_\theta \mathcal{L}(\theta; \mathcal{D}_{\text{new}})$$
+
+To prevent catastrophic forgetting and **model collapse** (Shumailov et al., Nature 2024), we formulate post-training as **Experience Replay optimization** (Robins, 1995; Rolnick et al., 2019):
+$$\mathcal{L}_{\text{continual}}(\theta) = (1 - \alpha) \mathbb{E}_{(x, y) \sim \mathcal{D}_{\text{anchor}}} [\mathcal{L}(\theta; x, y)] + \alpha \mathbb{E}_{(x, y) \sim \mathcal{D}_{\text{web}}} [\mathcal{L}(\theta; x, y)]$$
+where $\alpha = 0.30$ maintains a strict **70% Golden Anchor / 30% Fresh Stream** mixture ratio, mathematically bounding knowledge drift:
+$$\mathbb{D}_{\text{KL}}\left(\pi_{\theta_{k+1}} \parallel \pi_{\theta_{\text{anchor}}}\right) \le \epsilon_{\text{drift}}$$
+
+##### 1.2 Hybrid Retrieval Mathematics: Sparse BM25 + Dense Semantic Fusion
+Given user query $q$ and corpus document pool $\mathcal{D} = \{d_1, \dots, d_N\}$:
+1. **Sparse Lexical Score (Okapi BM25)**:
+   $$\text{BM25}(q, d) = \sum_{t \in q} \text{IDF}(t) \cdot \frac{f(t, d) \cdot (k_1 + 1)}{f(t, d) + k_1 \cdot \left(1 - b + b \cdot \frac{|d|}{\text{avgdl}}\right)}$$
+2. **Dense Semantic Cosine Similarity**:
+   $$\text{Dense}(q, d) = \frac{\mathbf{e}_q^\top \mathbf{e}_d}{\|\mathbf{e}_q\| \|\mathbf{e}_d\|}$$
+3. **Reciprocal Rank Fusion (RRF)** (Cormack et al., SIGIR 2009):
+   $$\text{RRF}(d) = \frac{1}{k + \text{rank}_{\text{BM25}}(d)} + \frac{1}{k + \text{rank}_{\text{Dense}}(d)}, \quad k = 60$$
+   RRF ensures scale-invariance and robustness against outliers across score distributions.
+
+##### 1.3 Zero-Downtime Atomic Hot-Swap Protocol
+To deploy new candidate weights $\theta_{\text{cand}}$ without dropping in-flight user requests:
+1. Export model weights/adapters to persistent storage.
+2. Load candidate model into a secondary memory buffer.
+3. Perform atomic pointer swap (`active_model_ptr = candidate_model_ptr`).
+4. Reclaim memory of superseded model only after pending in-flight requests complete.
+
+---
+
+#### 2. Phased Architecture & Execution Roadmap for Milestone 6
+
+- **Phase 6.1: Hybrid Retrieval Engine (`retrieval/`)**:
+  - `BM25Index`: In-memory inverted index, term frequency calculation, and length normalization.
+  - `DenseEmbeddingIndex`: Normalized vector index with cosine similarity search.
+  - `HybridRetriever`: Reciprocal Rank Fusion (RRF) and convex score combination.
+- **Phase 6.2: Experience Replay Buffer Manager (`datasets/`)**:
+  - `ExperienceReplayBuffer`: Stratified 70/30 anchor-web sampling with memory-mapped token reads after export.
+  - Model collapse prevention validator and data provenance tracking.
+- **Phase 6.3: Autonomous Continual Learning Loop Orchestrator (`orchestration/`)**:
+  - `ContinualLearningOrchestrator`: Event-driven pipeline executing Scrape $\to$ Curate $\to$ Replay $\to$ Train $\to$ Gate $\to$ Promote.
+  - Integrated with M4 `StatisticalGatingEngine` and `RollbackOrchestrator`.
+- **Phase 6.4: FastAPI Serving Gateway & Zero-Downtime Hot-Swap (`apps/`)**:
+  - FastAPI endpoints: `/query` (RAG stream), `/status`, `/trigger_learning`, `/models/promote`.
+  - `ModelServingManager`: Thread-safe atomic pointer swapping for zero-downtime updates.
+- **Phase 6.5: End-to-End System Verification & Final Project Dossier**:
+  - Comprehensive integration test suite verifying the complete continual loop from query to deployment.
+  - Master test runner registration and repository-wide documentation.
+
+---
+
+### 10.1 Phase 6.1: Hybrid Retrieval Engine (BM25 + Dense Semantic Fusion & Reciprocal Rank Fusion)
+
+#### 1. Theoretical Foundation & Literature Survey
+Retrieval-Augmented Generation (RAG) grounds language model responses on authoritative external evidence, mitigating hallucinations and ensuring factual veracity (Lewis et al., NeurIPS 2020; Guu et al., ICML 2020).
+
+```mermaid
+flowchart TD
+    subgraph Query_Processing["Query Pipeline"]
+        Query[Query q] --> Tokenizer[Lexical Tokenizer & Stemmer]
+        Query --> Embedder[Dense Embedding Projector e_q]
+    end
+
+    subgraph Sparse_Search["BM25 Inverted Index"]
+        Tokenizer --> BM25_Search["BM25 Lexical Scoring (k_1=1.5, b=0.75)"]
+        BM25_Search --> BM25_Ranks["Ranked List: R_BM25 = [d_1, d_2, ...]"]
+    end
+
+    subgraph Dense_Search["Vector Embedding Index"]
+        Embedder --> Dense_Search_Op["Dense Cosine Similarity e_q · e_d"]
+        Dense_Search_Op --> Dense_Ranks["Ranked List: R_Dense = [d_k, d_j, ...]"]
+    end
+
+    subgraph Fusion["Rank Aggregation"]
+        BM25_Ranks --> RRF_Compute["Reciprocal Rank Fusion: RRF(d) = sum_m 1 / (60 + rank_m(d))"]
+        Dense_Ranks --> RRF_Compute
+        RRF_Compute --> TopK["Top-K Evidence Passages with Provenance URLs"]
+    end
+```
+
+##### 1.1 Sparse Lexical Retrieval: Okapi BM25
+The Okapi BM25 algorithm (Robertson et al., 1994, 2009) scores relevance based on term frequency saturation and document length normalization:
+$$\text{BM25}(q, d) = \sum_{t \in q} \text{IDF}(t) \cdot \frac{f(t, d) \cdot (k_1 + 1)}{f(t, d) + k_1 \cdot \left(1 - b + b \cdot \frac{|d|}{\text{avgdl}}\right)}$$
+where:
+- $f(t, d)$ is the frequency of query term $t$ in document $d$.
+- $|d|$ is document token length, and $\text{avgdl}$ is the average document length across the corpus.
+- $k_1 = 1.5$ controls non-linear term frequency saturation.
+- $b = 0.75$ controls document length penalty severity.
+- $\text{IDF}(t) = \ln\left( \frac{N - n(t) + 0.5}{n(t) + 0.5} + 1 \right)$, where $N$ is total corpus documents and $n(t)$ is document frequency of term $t$.
+
+##### 1.2 Dense Semantic Vector Search
+Sparse search excels at exact keywords and entity matching but fails on vocabulary mismatch (e.g. "heart attack" vs "myocardial infarction"). Dense retrieval (Karpukhin et al., EMNLP 2020) maps text into embedding space $\mathbb{R}^d$:
+$$\text{Sim}_{\text{dense}}(q, d) = \frac{\mathbf{e}_q^\top \mathbf{e}_d}{\|\mathbf{e}_q\|_2 \|\mathbf{e}_d\|_2}$$
+
+##### 1.3 Reciprocal Rank Fusion (RRF)
+Combining raw sparse scores (unbounded positive reals) with dense scores (cosine similarity $[-1, 1]$) through linear interpolation requires calibration. Cormack et al. (SIGIR 2009) proposed **Reciprocal Rank Fusion (RRF)** as a rank-based alternative that does not depend on the original score scales:
+$$\text{RRF}(d) = \sum_{m \in \{\text{BM25}, \text{Dense}\}} \frac{1}{k + \text{rank}_m(d)}$$
+where $k = 60$ is the standard smoothing parameter preventing top ranks from dominating disproportionately.
+
+---
+
+#### 2. Architecture & File Layout for Phase 6.1
+
+```
+retrieval/
+├── __init__.py               # Package exports
+├── bm25.py                   # BM25Index: Inverted index, TF-IDF, length normalization
+├── dense.py                  # DenseEmbeddingIndex: Vector storage and cosine search
+└── hybrid.py                 # HybridRetriever: RRF & convex score combination
+
+tests/
+└── test_m6_hybrid_retrieval.py # Comprehensive unit and integration test suite
+```
+
+---
+
+#### 3. Concrete Step-by-Step Implementation Sequence for Phase 6.1
+
+1. **Step 6.1.1: BM25 Index (`retrieval/bm25.py`)**:
+   - `BM25Index`: In-memory inverted index mapping tokens to document IDs and frequencies.
+   - Calculates Okapi BM25 scores with document length normalization and smoothed IDF.
+   - Dynamic document addition and search query ranking.
+2. **Step 6.1.2: Dense Vector Index (`retrieval/dense.py`)**:
+   - `DenseEmbeddingIndex`: Stores document text, metadata, and normalized embedding vectors.
+   - Computes cosine similarity rankings.
+3. **Step 6.1.3: Hybrid Retriever (`retrieval/hybrid.py`)**:
+   - `HybridRetriever`: Coordinates sparse and dense indices.
+   - Implements Reciprocal Rank Fusion (`RRF`, $k=60$) and convex score blending.
+   - Returns top-$K$ scored passages with text, URL provenance, and fused scores.
+4. **Step 6.1.4: Unit Tests (`tests/test_m6_hybrid_retrieval.py`)**:
+   - Test BM25 exact matching and length penalty invariance.
+   - Test dense cosine similarity search.
+   - Test RRF score combination and scale invariance.
+   - Test hybrid top-$K$ retrieval against keyword and semantic queries.
+5. **Step 6.1.5: Master Test Runner Registration (`tests/run_all.py`)**:
+   - Register into `tests/run_all.py` and verify 100% test pass rate across M0 through M6.1.
+
+---
+
+### 10.2 Phase 6.2: Experience Replay Buffer Manager (70% Golden Anchor / 30% Streaming Web + Model Collapse Guards)
+
+#### 1. Theoretical Foundation & Literature Survey
+In an autonomous continual learning lifecycle, training an autoregressive model sequentially on newly ingested web data poses two existential threats:
+1. **Catastrophic Forgetting (Robins, 1995; French, 1999)**: Gradient updates on fresh non-stationary data overwrite weights critical for general reasoning, syntax, and foundational knowledge.
+2. **Risk from Recursive Synthetic Data (Shumailov et al., Nature 2024)**: Repeated training on generated data can degrade learned distributions in the studied settings. The paper does not show that any individual synthetic or repetitive web document causes irreversible collapse; this project's text-level checks are heuristic quality filters, not a model-collapse detector.
+
+```mermaid
+flowchart TD
+    subgraph Data_Sources["1. Incoming Data Ingestion Streams"]
+        AnchorCorpus["Golden Anchor Corpus<br/>(Immutable Baseline Pre-training Data)"]
+        WebCorpus["Fresh Web Ingestion Stream<br/>(Scraped & MinHash Deduplicated)"]
+    end
+
+    subgraph Collapse_Guard["2. Model Collapse & Degeneracy Guard"]
+        WebCorpus --> Guard{"ModelCollapseGuard<br/>• Shannon Entropy H(X) >= tau_H<br/>• Vocab Diversity V_ratio >= tau_V<br/>• Repetition Penalty"}
+        Guard -->|Passes Quality Checks| SafeWeb["Quarantine-Approved Web Pool"]
+        Guard -->|Entropy / Diversity Collapse| Quarantine["Quarantined / Discarded"]
+    end
+
+    subgraph Replay_Manager["3. Experience Replay Stratified Buffer"]
+        AnchorCorpus --> Buffer[ExperienceReplayBuffer]
+        SafeWeb --> Buffer
+        Buffer --> StratifiedSampler["Stratified Sampler<br/>70% Anchor / 30% Web Mixture"]
+    end
+
+    subgraph Training_Feed["4. Streaming Mini-Batch Pipeline"]
+        StratifiedSampler --> Batch["Mini-Batch Generation<br/>(B * 0.7 Anchor + B * 0.3 Web)"]
+        Batch --> MemMap["Zero-RAM Binary Serializer / np.memmap"]
+        MemMap --> Engine["Continual SFT / GRPO Engine"]
+    end
+
+    style Guard fill:#7c2d12,stroke:#f97316,stroke-width:2px,color:#fff
+    style Buffer fill:#064e3b,stroke:#10b981,stroke-width:2px,color:#fff
+    style StratifiedSampler fill:#1e293b,stroke:#38bdf8,stroke-width:2px,color:#fff
+```
+
+##### 1.1 Model Collapse: Evidence and Project Heuristics
+Shumailov et al. (Nature 2024) study recursive training on generated data and identify loss of distributional tails and eventual model collapse under the settings they analyze. The paper does not imply that every sequence of generated data follows a single variance recurrence or that collapse is universally irreversible.
+
+`ModelCollapseGuard` does not observe model generations or estimate a model's output distribution. It applies text-level heuristics to each incoming sample:
+
+1. **Shannon Token Entropy**:
+   $$\mathcal{H}(T) = -\sum_{v \in V} p(v) \log_2 p(v)$$
+   where $p(v) = \frac{\text{count}(v)}{|T|}$. Sequences with $\mathcal{H}(T) < \tau_{\mathcal{H}}$ (e.g. $\tau_{\mathcal{H}} = 2.5$) exhibit pathological unigram repetition and are quarantined.
+
+2. **Vocabulary Diversity Ratio**:
+   $$V_{\text{ratio}}(T) = \frac{|V_{\text{unique}}|}{|T|}$$
+   If $V_{\text{ratio}} < \tau_{V}$ (e.g. $\tau_{V} = 0.20$ for sequences $|T| \ge 20$), the text is rejected as synthetic hallucination or boilerplate spam.
+
+3. **Maximum N-Gram Repetition Ratio**:
+   Measures the frequency of the most repeated 4-gram against total 4-grams. The current default rejects a sample when $\max_g \frac{f(g)}{N_{\text{grams}}} > 0.25$.
+
+##### 1.2 Robins Experience Replay & Stratified 70/30 Mixture
+To guarantee that the continually adapted model $\pi_\theta$ does not catastrophically drift from the anchor baseline $\pi_{\text{anchor}}$, Robins (1995) and Askell et al. (2021) formulate the continual optimization objective as a convex combination of anchor empirical risk and web empirical risk:
+$$\mathcal{L}_{\text{continual}}(\theta) = (1 - \alpha) \mathbb{E}_{(x, y) \sim \mathcal{D}_{\text{anchor}}} [\mathcal{L}(\theta; x, y)] + \alpha \mathbb{E}_{(x, y) \sim \mathcal{D}_{\text{web}}} [\mathcal{L}(\theta; x, y)]$$
+where $\alpha = 0.30$.
+In finite-sample mini-batch training with batch size $B$:
+$$N_{\text{anchor}} = \lceil (1 - \alpha) B \rceil = \lceil 0.70 B \rceil, \quad N_{\text{web}} = B - N_{\text{anchor}} = \lfloor 0.30 B \rfloor$$
+This controls the intended source proportion in the sampled batch when both pools are available. It does not guarantee that 70% of the gradient magnitude comes from anchor examples, and it implies no bound of the form $\mathbb{D}_{\text{KL}}(\pi_\theta \parallel \pi_{\text{anchor}}) \le \epsilon_{\text{drift}}$ without additional assumptions and an explicit constraint or regularizer.
+
+##### 1.3 Memory-Mapped Token Reads
+The exported token files are read by `MemoryMappedTokenDataset`, which avoids loading the complete binary file into a Python list during later sampling. The current exporter still materializes the combined text and token lists in memory before writing; it is not an end-to-end zero-RAM or $\mathcal{O}(1)$-memory export pipeline.
+
+---
+
+#### 2. Architecture & File Layout for Phase 6.2
+
+```
+curation/
+├── replay_buffer.py          # ExperienceReplayBuffer & ModelCollapseGuard (Phase 6.2)
+├── schemas.py                # ReplaySample & Batch schemas
+└── __init__.py               # Exports ExperienceReplayBuffer, ModelCollapseGuard
+
+tests/
+├── test_m6_hybrid_retrieval.py # Phase 6.1 tests (passing)
+└── test_m6_replay_buffer.py    # Phase 6.2 tests (new)
+```
+
+---
+
+#### 3. Concrete Step-by-Step Implementation Sequence for Phase 6.2
+
+1. **Step 6.2.1: Model Collapse Guard (`curation/replay_buffer.py`)**:
+   - `ModelCollapseGuard`:
+     - Computes token Shannon entropy $\mathcal{H}(T)$.
+     - Computes vocabulary diversity ratio $V_{\text{ratio}}$.
+     - Computes n-gram repetition frequency.
+     - Evaluates whether candidate text passes sanity thresholds or should be quarantined.
+
+2. **Step 6.2.2: Experience Replay Buffer (`curation/replay_buffer.py`)**:
+   - `ReplaySample`: Dataclass holding token IDs, text, source (`"anchor"` or `"web"`), URL, metadata.
+   - `ExperienceReplayBuffer`:
+     - Stores anchor pool (immutable) and web pool (sliding window FIFO with max capacity).
+     - `add_anchor_sample(sample)` and `add_web_sample(sample)`.
+     - Automatically routes web samples through `ModelCollapseGuard`.
+     - `sample_batch(batch_size, alpha=0.30)`: Returns stratified batch with exact 70/30 mixture.
+     - `export_sharded_binaries(...)`: Serializes uint16 tokens for later `np.memmap` reads; the current export step materializes the texts and token IDs in memory.
+
+3. **Step 6.2.3: Module Exports (`curation/__init__.py`)**:
+   - Expose `ExperienceReplayBuffer`, `ModelCollapseGuard`, and `ReplaySample`.
+
+4. **Step 6.2.4: Comprehensive Unit Tests (`tests/test_m6_replay_buffer.py`)**:
+   - Test Shannon entropy and vocabulary diversity calculation exactness.
+   - Test `ModelCollapseGuard` flags synthetic degenerate text while accepting normal natural text.
+   - Test 70/30 stratified sampling ratio exactness across multiple batch sizes.
+   - Test sliding-window web capacity eviction while anchor pool remains immutable.
+   - Test binary token serialization and round-trip streaming.
+
+5. **Step 6.2.5: Master Test Runner Registration (`tests/run_all.py`)**:
+   - Register `TestM6ReplayBuffer` and verify 100% test pass rate across all milestones.
+
+---
+
+### 10.3 Concurrent Serving & Ingestion Architecture (design target; throughput not benchmarked)
+
+#### 1. Theoretical Formulation & Literature Survey
+When a production AI system faces high concurrency (e.g., $100\text{ queries/second}$), naive continual learning loops fail catastrophically:
+1. **Latency Collapse**: Synchronously invoking web scraping (2–5 seconds) and fine-tuning (30–120 seconds) inside the client request-response lifecycle creates extreme queuing delays, timing out HTTP connections.
+2. **Resource Exhaustion & GPU Thrashing**: Triggering a gradient update per request ($\mathcal{O}(N)$ fine-tunes) causes out-of-memory (OOM) crashes and prevents the GPU from serving in-flight inferences.
+3. **Redundant Scraping**: During real-world spikes, hundreds of users ask queries regarding identical breaking topics. Uncoordinated ingestion spawns dozens of redundant scrapes to the same target domain, inducing IP bans and wasted compute.
+
+To resolve these challenges, modern production architectures (vLLM, Ray Serve, Triton Inference Server, GPTCache) decompose the system into a **Decoupled Asynchronous Read/Write Architecture**:
+
+```mermaid
+flowchart TD
+    subgraph Client_Traffic["1. Concurrent Client Ingress (load target only)"]
+        Users["Concurrent HTTP Requests"] --> Gateway["FastAPI Gateway<br/>(uvicorn / asyncio event loop)"]
+    end
+
+    subgraph Fast_Path["2. Online Read Path (latency not benchmarked)"]
+        Gateway --> SemanticCache{"Semantic Cache (L1)<br/>sim(e_q, e_cached) >= 0.95?"}
+        SemanticCache -->|Cache Hit| ImmediateReturn["Cached response<br/>(latency not measured)"]
+
+        SemanticCache -->|Cache Miss| HybridRAG["L2: Hybrid Retrieval Engine<br/>• BM25 Inverted Index<br/>• Dense Cosine Vector Index<br/>• Reciprocal Rank Fusion (k=60)"]
+        HybridRAG --> ActiveModel["Configured model backend<br/>(not connected by default)"]
+        ActiveModel --> JsonResponse["JSON response"]
+    end
+
+    subgraph Async_Decoupling["3. Asynchronous Ingestion & Debounce Queue"]
+        Gateway -.->|Non-Blocking Async Event| TelemetryQueue["Bounded In-Memory / Redis Queue<br/>(Interaction Telemetry & Knowledge Triggers)"]
+        TelemetryQueue --> Coalescer["Request Coalescer & Debouncer<br/>(Collapses Redundant Queries over Window T_debounce)"]
+    end
+
+    subgraph Slow_Path["4. Out-of-Band Background Training Worker (Runs Out-of-Band)"]
+        Coalescer --> IngestionWorker["Async Ingestion Worker<br/>(Scrape -> C4 Filter -> MinHash Dedup)"]
+        IngestionWorker --> ReplayManager["ExperienceReplayBuffer<br/>(ModelCollapseGuard -> 70% Anchor / 30% Web)"]
+        ReplayManager -->         TriggerCheck{"Proposed continual training triggers<br/>• Buffer volume<br/>• Scheduled interval<br/>• Evaluation drift"}
+
+        TriggerCheck -->|Condition Met| ShadowTrainer["Shadow Training Engine<br/>Train Candidate θ_cand on Secondary Buffer"]
+        ShadowTrainer --> StatisticalGate["M4 Statistical Gating Engine<br/>(LLM Judge + Bootstrap CI + McNemar)"]
+        StatisticalGate -->|PROCEED_DEPLOY| AtomicHotSwap["Atomic Hot-Swap Pointer<br/>active_model_ptr = cand_model_ptr"]
+        StatisticalGate -->|BLOCK_RELEASE / ROLLBACK| RetainActive["Retain Baseline θ_active"]
+    end
+
+    ImmediateReturn --> Users
+    JsonResponse --> Users
+    AtomicHotSwap -.->|Zero-Downtime Memory Swap| ActiveModel
+
+    style SemanticCache fill:#064e3b,stroke:#10b981,stroke-width:2px,color:#fff
+    style Coalescer fill:#7c2d12,stroke:#f97316,stroke-width:2px,color:#fff
+    style AtomicHotSwap fill:#4c1d95,stroke:#a855f7,stroke-width:2px,color:#fff
+```
+
+---
+
+##### 1.1 Landmark Academic Papers & System Implementations
+
+| System / Paper | Landmark Reference | Core Innovation | Concurrency Mechanism |
+| :--- | :--- | :--- | :--- |
+| **vLLM** | Kwon et al. (*SOSP 2023*, UC Berkeley) | **PagedAttention & Continuous Batching** | Dynamic iteration-level request insertion; eliminates internal memory fragmentation, achieving $2\times - 4\times$ throughput vs static batching. |
+| **Orca** | Yu et al. (*OSDI 2022*) | **Iteration-Level Scheduling** | Decouples batch processing from sequence length; new requests join the forward pass mid-flight without waiting for older requests to finish decoding. |
+| **GPTCache** | Bang et al. (*2023*, Zilliz) | **Semantic Caching for LLMs** | Vector similarity lookup over past user queries ($\text{sim} \ge 0.95$). Bypasses retrieval and LLM generation entirely for frequent queries. |
+| **WAND / Tantivy** | Broder et al. (*CIKM 2003*) | **Weak AND Dynamic Pruning** | Prunes non-competitive documents before computing full Okapi BM25 scores, reducing inverted index lookup latency by $80\%$. |
+| **Ray Serve** | Moritz et al. (*OSDI 2018*, Anyscale) | **Actor-Based Micro-Batching & Async Queues** | Distributes serving actors across worker pools with lock-free bounded queues and worker autoscaling. |
+| **Token Bucket** | Turner (*IEEE Comm 1986*) | **Rate Limiting & Leaky Bucket** | Regulates bursty traffic ($100 \to 1000\text{ req/s}$) to smooth out compute demand and prevent system saturation. |
+
+---
+
+##### 1.2 Mathematical Foundations of High-Throughput Serving & Continual Loops
+
+###### 1. Dynamic / Continuous Batching
+Under traditional static batching with batch size $B$, the latency of the batch is bound by the slowest sequence length $T_{\max}$:
+$$\text{Latency}_{\text{static}} = \mathcal{O}\left(\max_{i \in [1, B]} T_i\right)$$
+In **Continuous Batching (Orca / vLLM)**, requests are scheduled at the token iteration level $t$. At step $t$, the active batch is:
+$$\mathcal{B}_t = \{r_i \mid \text{state}(r_i) == \text{GENERATING}\}$$
+If request $r_j$ completes generation at step $t$, it is immediately evicted and replaced by candidate request $r_{k}$ from the waiting queue, maximizing GPU tensor core utilization to near $100\%$.
+
+###### 2. Semantic Caching Formulation
+Let query $q$ have dense embedding $\mathbf{e}_q$. Let cache pool $\mathcal{C} = \{(q_i, \mathbf{e}_{q_i}, \mathcal{R}_i)\}_{i=1}^M$.
+The maximum semantic similarity is:
+$$s^* = \max_{i \in [1, M]} \frac{\mathbf{e}_q^\top \mathbf{e}_{q_i}}{\|\mathbf{e}_q\| \|\mathbf{e}_{q_i}\|}$$
+The decision rule is:
+$$\text{Response}(q) = \begin{cases} \mathcal{R}_{i^*} & \text{if } s^* \ge \tau_{\text{cache}} \quad (\text{Cache Hit: } < 5\text{ms}) \\ \text{Pipeline}(q) & \text{if } s^* < \tau_{\text{cache}} \quad (\text{Cache Miss: Hybrid RAG + LLM}) \end{cases}$$
+With $\tau_{\text{cache}} = 0.95$, typically $30\% - 50\%$ of identical/paraphrased user queries during peak events are served directly from cache, reducing downstream retrieval and model load by up to half.
+
+###### 3. Request Coalescing & Debouncing
+When $N$ requests $\{q_1, \dots, q_N\}$ arrive within a debounce window $\Delta t_{\text{debounce}}$ (e.g. $2.0\text{ seconds}$), the coalescer groups them using MinHash or embedding similarity into $K \ll N$ canonical clusters. Only $K$ distinct ingestion requests are dispatched to the web scraper, achieving an $N/K$-fold reduction in external bandwidth and preprocessing compute.
+
+###### 4. Event-Driven Decoupled Training Triggering
+Continual training never executes inline with the HTTP request. Instead, training is triggered if and only if:
+$$\text{Trigger} = \left( |\mathcal{D}_{\text{web\_new}}| \ge N_{\text{threshold}} \right) \lor \left( \Delta t \ge T_{\text{interval}} \right) \lor \left( \text{Drift}(\mathcal{D}_{\text{eval}}) > \tau_{\text{drift}} \right)$$
+where $N_{\text{threshold}} = 500$, $T_{\text{interval}} = 1\text{ hour}$, and $\tau_{\text{drift}} = 0.05$.
+
+###### 5. Zero-Downtime Atomic Hot-Swap
+To replace active model $\theta_{\text{active}}$ with newly validated candidate $\theta_{\text{cand}}$:
+```python
+# Thread-safe atomic pointer update under Reader-Writer Lock or Python GIL
+with model_manager.write_lock():
+    model_manager.active_model = candidate_model
+```
+Existing in-flight requests holding references to the previous model finish cleanly, while all subsequent requests instantly access $\theta_{\text{cand}}$ without dropping a single packet.
+
+---
+
+#### 2. Architecture & File Layout for High-Throughput Orchestration & Serving
+
+```
+orchestration/
+├── __init__.py               # Orchestrator package exports
+├── async_queue.py            # Async bounded telemetry & event queue with rate limiting
+├── coalescer.py              # Request coalescer & debouncer (clusters bursty queries)
+├── semantic_cache.py         # L1 Semantic Cache with cosine similarity lookup
+├── continuous_batcher.py     # Continuous / Dynamic Batching scheduler for MiniGPT
+└── loop_orchestrator.py      # ContinualLearningOrchestrator: Coordinates decoupled loop
+
+apps/
+├── __init__.py               # Serving gateway package exports
+├── server.py                 # FastAPI Gateway (/query, /status, /trigger_learning)
+└── serving_manager.py        # Thread-safe ModelServingManager (Atomic Hot-Swap)
+```
+
+---
+
+#### 3. Concrete Phased Implementation Sequence
+
+- **Phase 6.3: Autonomous Continual Learning Loop Orchestrator (`orchestration/`)**:
+  - Implements `SemanticCache` (L1 cache), `RequestCoalescer` (debounces 100 req/s), and `ContinualLearningOrchestrator` coordinating background ingestion, replay buffer ingestion, model training, M4 statistical gating, and promotion triggers.
+- **Phase 6.4: FastAPI Serving Gateway & Zero-Downtime Hot-Swap (`apps/`)**:
+  - Implements high-concurrency async endpoints, streaming token output, `ModelServingManager` atomic hot-swap pointer swapping, and rate limiting.
+- **Phase 6.5: End-to-End System Verification & Final Dossier**:
+  - End-to-end integration test validating 100 concurrent requests, semantic cache hits, background training, and zero-downtime hot-swapping.
+
+---
+
+### 10.4 Phase 6.4: High-Throughput FastAPI Serving Gateway & Zero-Downtime Atomic Hot-Swap
+
+#### 1. Theoretical Foundation & Literature Survey
+The intended serving design separates network concurrency from model execution. No claim of 100+ requests/second or a specific latency is made without a reproducible load test.
+1. **Non-Blocking Asynchronous Concurrency**:
+   - Synchronous retrieval or model calls made directly from an `async` route block that event loop. ASGI handles concurrent network I/O, but CPU/GPU inference must be offloaded or served through an async-capable backend.
+2. **Server-Sent Events (SSE) Streaming**:
+   - Incremental token delivery requires a model/backend API that yields tokens and an HTTP streaming response. SSE transport does not itself guarantee any specific time-to-first-token. The repository's current `/query` endpoint returns JSON and rejects streaming requests.
+3. **Zero-Downtime Live Model Updates**:
+   - Chen et al. (*MLSys 2021* - "Live Model Updates in Deep Learning Systems") and NVIDIA Triton Inference Server establish that model weights can be updated without restarting the web server or dropping client connections.
+   - **Snapshot-Based Model Promotion**: `ModelServingManager.read_context()` snapshots the active reference and tracks reader count; it does not hold a shared lock during inference. Promotion updates the reference under a short `RLock`. Requests already holding a reference can finish using it, but resource lifetime, GPU memory reclamation, and synchronization with the separate orchestrator model reference require additional coordination.
+
+```mermaid
+flowchart TD
+    subgraph Client_Requests["1. Incoming Client Ingress"]
+        C1[Client 1] --> EP_Query["POST /query"]
+        C2[Client 2] --> EP_Query
+        C3[Admin / Agent] --> EP_Promote["POST /models/promote"]
+        C4[Monitor] --> EP_Status["GET /status"]
+    end
+
+    subgraph Serving_Gateway["2. FastAPI Application (apps/server.py)"]
+        EP_Query --> Orch[ContinualLearningOrchestrator]
+        EP_Status --> Orch
+        EP_Promote --> MSM[ModelServingManager]
+    end
+
+    subgraph Concurrency_Control["3. Thread-Safe Reader-Writer Locking"]
+        Orch --> ReadLock["Acquire Shared Read Lock<br/>Multiple In-Flight Inferences Run Simultaneously"]
+        ReadLock --> ActiveModel["Active Serving Model θ_active"]
+
+        MSM --> WriteLock["Acquire Exclusive Write Lock<br/>Microsecond Duration Pointer Swap"]
+        WriteLock -.->|Atomic Swap θ_active = θ_cand| ActiveModel
+    end
+
+    subgraph Response_Stream["4. Outgoing Response"]
+        ActiveModel --> JSON["JSON response (current implementation)"]
+        JSON --> C1
+        JSON --> C2
+    end
+
+    style ReadLock fill:#064e3b,stroke:#10b981,stroke-width:2px,color:#fff
+    style WriteLock fill:#7c2d12,stroke:#f97316,stroke-width:2px,color:#fff
+    style ActiveModel fill:#1e293b,stroke:#38bdf8,stroke-width:2px,color:#fff
+```
+
+---
+
+#### 2. Architecture & File Layout for Phase 6.4
+
+```
+apps/
+├── __init__.py               # Exports ModelServingManager, create_app
+├── serving_manager.py        # Thread-safe ModelServingManager (RWLock, Atomic Swap)
+└── server.py                 # FastAPI Gateway endpoints (/query, /status, /trigger_learning, /models/promote, /models/rollback)
+
+tests/
+├── test_m6_orchestrator.py   # Phase 6.3 tests (passing)
+└── test_m6_serving_gateway.py # Phase 6.4 comprehensive test suite (new)
+```
+
+---
+
+#### 3. Concrete Step-by-Step Implementation Sequence for Phase 6.4
+
+1. **Step 6.4.1: Thread-Safe Model Serving Manager (`apps/serving_manager.py`)**:
+   - `ModelServingManager`:
+     - Holds `active_model`, `anchor_model`, `model_version`, and `active_readers` counter.
+     - Reader context manager `read_context()` that snapshots the active model reference and reports active readers.
+     - Writer method `promote_candidate(candidate_model)` performing atomic pointer swapping under exclusive write lock.
+     - Rollback method `rollback_to_anchor()` restoring golden baseline weights.
+
+2. **Step 6.4.2: FastAPI Serving Gateway (`apps/server.py`)**:
+   - `create_app(orchestrator, serving_manager)` factory returning production FastAPI instance.
+   - Endpoints:
+     - `POST /query`: Supports JSON query processing; streaming requests currently return HTTP 501.
+     - `GET /status`: Returns JSON telemetry from orchestrator, cache, coalescer, and model version.
+     - `POST /trigger_learning`: Runs the training cycle in a worker thread so it does not block the ASGI event loop; the request waits for the result.
+     - `POST /models/promote`: Promotes candidate model to active serving with version increment.
+     - `POST /models/rollback`: Reverts active serving model to golden anchor baseline.
+
+3. **Step 6.4.3: Package Exports (`apps/__init__.py`)**:
+   - Expose `create_app` and `ModelServingManager`.
+
+4. **Step 6.4.4: Comprehensive Gateway Test Suite (`tests/test_m6_serving_gateway.py`)**:
+   - Test `POST /query` returns grounded responses and caches queries.
+   - Test `GET /status` returns valid telemetry and metrics.
+   - Test `POST /trigger_learning` triggers continual training cycle.
+   - Test zero-downtime hot-swap (`POST /models/promote`) increments version without service interruption.
+   - Test safety rollback (`POST /models/rollback`) reverts to anchor version 0.
+
+5. **Step 6.4.5: Master Test Runner Registration (`tests/run_all.py`)**:
+   - Register `TestM6ServingGateway` and verify behavior across the milestones.
+
+---
+
+# Research Verification and Implementation Status
+
+This section separates published results from implementation choices and records which parts of the architecture are exercised by the current code. Numerical thresholds and performance statements are not treated as research results unless the cited source measures them in the same setting.
+
+## Primary papers and technical reports reviewed
+
+| Topic | Primary source |
+|---|---|
+| Transformer and scaled dot-product attention | Vaswani et al., [Attention Is All You Need](https://arxiv.org/abs/1706.03762) |
+| Low-rank adaptation | Hu et al., [LoRA: Low-Rank Adaptation of Large Language Models](https://arxiv.org/abs/2106.09685) |
+| Recursive training and model collapse | Shumailov et al., [The Curse of Recursion: Training on Generated Data Makes Models Forget](https://arxiv.org/abs/2305.17493), subsequently published in *Nature* |
+| Web corpus curation | Penedo et al., [The FineWeb Datasets: Decanting the Web for the Finest Text Data at Scale](https://arxiv.org/abs/2406.17557) |
+| Preference optimization | Rafailov et al., [Direct Preference Optimization](https://arxiv.org/abs/2305.18290) |
+| Group-relative policy optimization | Shao et al., [DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models](https://arxiv.org/abs/2402.03300) |
+| Reasoning via reinforcement learning | DeepSeek-AI, [DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning](https://arxiv.org/abs/2501.12948) |
+| Instruction following and RLHF | Ouyang et al., [Training language models to follow instructions with human feedback](https://arxiv.org/abs/2203.02155) |
+| LLM-as-a-judge evaluation | Zheng et al., [Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena](https://arxiv.org/abs/2306.05685) |
+| Retrieval-augmented generation evaluation | Es et al., [RAGAS: Automated Evaluation of Retrieval Augmented Generation](https://arxiv.org/abs/2309.15217) |
+| Citation-grounded generation | Gao et al., [Enabling Large Language Models to Generate Text with Citations](https://arxiv.org/abs/2305.14627) |
+
+## Engineering articles and documentation reviewed
+
+- Hugging Face, [Illustrating RLHF](https://huggingface.co/blog/rlhf): accessible overview of the supervised fine-tuning, preference/reward modeling, and policy optimization stages.
+- Hugging Face, [Fine-tuning Llama 2 with DPO and TRL](https://huggingface.co/blog/dpo-trl): practical DPO-vs-PPO comparison and the expected prompt/chosen/rejected data shape.
+- OpenAI, [Aligning language models to follow instructions](https://openai.com/index/instruction-following/): engineering and experimental overview of the InstructGPT alignment pipeline.
+- Hugging Face, [FineWeb dataset project](https://huggingface.co/spaces/HuggingFaceFW/blogpost-fineweb-v1): dataset construction context; use the associated FineWeb paper above for research claims.
+- FastAPI, [official documentation](https://fastapi.tiangolo.com/): framework behavior and async route guidance.
+
+These articles are explanatory sources, not substitutes for the primary papers. In particular, the FineWeb and model-collapse results do not establish this repository's quality thresholds, 70/30 replay ratio, retrieval accuracy, or serving throughput.
+
+## Claims that need bounded interpretation
+
+- The MinHash collision identity is exact for ideal random permutations. Finite hash families and LSH banding produce candidate probabilities, not guaranteed duplicate classification. The 80% similarity threshold and band configuration are project settings.
+- The replay mixture's entropy inequality applies to the sampled data distribution over a common sample space. It says nothing by itself about the trained policy's output entropy, KL drift, or catastrophic forgetting.
+- The model-collapse guard computes word-level entropy, vocabulary ratio, and repeated n-gram frequency for each text. Those are ingestion heuristics; they do not identify whether a model generated a document or measure recursive training collapse.
+- GRPO removes the learned critic used in PPO-style actor-critic setups. Memory savings depend on the full training configuration, and deterministic/verifiable rewards can still be misspecified or exploited; they are not inherently unhackable.
+- The RRF formula is rank-based; it is not universally optimal. Likewise, the configured 70/30 replay ratio and default cache similarity threshold have not been empirically selected for this repository's use case.
+- The current replay exporter builds combined text and token lists in memory. `np.memmap` is used for subsequent reads; this is not zero-RAM ingestion or serialization.
+- The 100 requests/second, sub-50ms, cache hit-rate, and continuous-batching figures in earlier architecture sketches are not repository benchmarks. No such throughput test is included.
+
+## Pipeline implementation status
+
+| Stage | Current connection | Limitation |
+|---|---|---|
+| Web ingestion → curation → deduplication → replay/export | `ContinualDataOrchestrator.ingest_curate_and_export` connects the ingestion router, curation pipeline, cluster deduplicator, replay buffer, and binary export. `ingest_curate_and_sft_align` separately connects curated documents to the MiniGPT SFT path. | Network source tests use mocked HTTP responses; a successful live crawl and production data-quality evaluation were not established by the unit suite. |
+| Retrieval → response → query cache / telemetry | `ContinualLearningOrchestrator.process_query` connects hybrid retrieval, response generation/fallback, semantic cache, coalescing, and telemetry. The FastAPI app exposes JSON query and status endpoints. | The default app has no active model configured and does not wire `OllamaClient`; the fallback response is evidence-formatted text, not a response generated by an LLM. |
+| Coalesced ingestion → replay buffer → retrieval index | `ingest_coalesced_knowledge` connects these components. | When no scraper callback is supplied, it synthesizes placeholder documents. This is a test/demo fallback, not live web ingestion; rejected replay samples should not be treated as evidence of a validated source pipeline. |
+| Replay → continual training → release gate → model promotion | The orchestrator supports a `train_fn` callback, benchmark evaluation, gating, and model pointer promotion. | Training now explicitly returns `SKIPPED` unless a training callback and non-empty replay buffer are supplied. The default FastAPI app does not configure such a callback, so `/trigger_learning` does not train a model by itself. |
+| FastAPI concurrency and streaming | Synchronous query and learning work is offloaded from the async route to a worker thread. | `/query` currently returns JSON; `stream=true` returns HTTP 501. The app is not a durable background-job system, and no concurrent-load benchmark is provided. |
+| Model formats | MiniGPT, native LoRA, preference trainers, and Ollama client exist as separate components. | No adapter export/conversion/deployment bridge connects the custom MiniGPT training path to the Ollama-served Qwen model. These are not interchangeable backends. |
+
+The unit/integration suite exercises the component graph with small models, mock callbacks, and mocked network responses. Passing those tests is evidence for those tested paths only; it is not evidence that a live, autonomous, Ollama-backed training-and-deployment loop is configured.

@@ -20,6 +20,10 @@ class CharTokenizer:
         """Total number of unique tokens in vocabulary."""
         return len(self.stoi)
 
+    def __len__(self) -> int:
+        """Total number of unique tokens in vocabulary."""
+        return len(self.stoi)
+
     @property
     def vocab(self) -> list[str]:
         """List of all unique characters in vocabulary."""

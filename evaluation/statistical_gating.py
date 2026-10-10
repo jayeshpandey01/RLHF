@@ -292,6 +292,21 @@ class StatisticalReleaseGate:
         passed_checks: list[str] = []
         violated_checks: list[str] = []
 
+        # Fail closed immediately if candidate scores are empty
+        if not candidate_scores:
+            violated_checks.append("Candidate evaluation score matrix is empty. Candidate failed inference.")
+            overall_boot = compute_paired_bootstrap([0.0], [4.0], num_replicates=10, seed=self.random_seed)
+            overall_hypo = HypothesisTestResult(0.0, 1.0, 0.0, 1.0, 0, 1, 0, 0, 1.0)
+            return GateReport(
+                decision=GateDecision.BLOCK_RELEASE,
+                overall_bootstrap=overall_boot,
+                overall_hypothesis=overall_hypo,
+                bucket_breakdown={},
+                passed_checks=[],
+                violated_checks=violated_checks,
+                recommendation_summary="Release BLOCKED: Candidate evaluation scores are missing or empty.",
+            )
+
         # 1. Align score vectors across all cases in the suite
         all_cases = suite.cases
         cand_list: list[float] = []
@@ -300,7 +315,9 @@ class StatisticalReleaseGate:
 
         for c in all_cases:
             cid = c.case_id
-            s_cand = candidate_scores.get(cid, 1.0)
+            if cid not in candidate_scores:
+                violated_checks.append(f"Missing evaluation score for case {cid} - marked as 0.0")
+            s_cand = candidate_scores.get(cid, 0.0)
             s_base = baseline_scores.get(cid, 1.0)
             cand_list.append(s_cand)
             base_list.append(s_base)
@@ -369,7 +386,13 @@ class StatisticalReleaseGate:
         regr_reg = bucket_breakdown.get("regression_replay", {}).get("regressions", 0)
         core_delta = bucket_breakdown.get("core_domain", {}).get("mean_delta", 0.0)
         edge_delta = bucket_breakdown.get("edge_case", {}).get("mean_delta", 0.0)
-        adv_mean = bucket_breakdown.get("adversarial_bait", {}).get("mean_candidate", 5.0)
+        adv_cases = [c for c in all_cases if c.bucket == "adversarial_bait"]
+        if "adversarial_bait" in bucket_breakdown:
+            adv_mean = bucket_breakdown["adversarial_bait"]["mean_candidate"]
+        elif adv_cases:
+            adv_mean = 0.0
+        else:
+            adv_mean = self.pass_threshold
 
         # Criterion 1: Zero-tolerance on core domain regressions
         if core_reg == 0:

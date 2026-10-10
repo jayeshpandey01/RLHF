@@ -293,6 +293,11 @@ class CitationVerifier:
 
         return claims
 
+    NEGATION_MARKERS = {
+        "not", "no", "never", "cannot", "without", "neither", "nor", "none",
+        "hardly", "barely", "scarcely", "fails", "failed", "refused", "denies"
+    }
+
     def check_entailment(self, claim: str, context: str) -> tuple[bool, float]:
         """Compute hybrid grounding entailment score S_ground between claim and context.
 
@@ -300,13 +305,21 @@ class CitationVerifier:
             C_lex = |ContentTokens(claim) intersect Tokens(context)| / |ContentTokens(claim)|
             J_token = |Tokens(claim) intersect Tokens(context)| / |Tokens(claim) union Tokens(context)|
             S_ground = 0.70 * C_lex + 0.30 * J_token
-            Entailed iff S_ground >= entailment_threshold
+            Entailed iff S_ground >= entailment_threshold and polarity matches.
         """
         claim_tokens = self.tokenize_words(claim)
         context_tokens = set(self.tokenize_words(context))
 
         if not claim_tokens or not context_tokens:
             return False, 0.0
+
+        # Polarity & Negation contradiction detection
+        claim_has_neg = any(
+            t in self.NEGATION_MARKERS or t.endswith("n't") for t in claim_tokens
+        )
+        context_has_neg = any(
+            t in self.NEGATION_MARKERS or t.endswith("n't") for t in context_tokens
+        )
 
         content_claim_tokens = [t for t in claim_tokens if t not in self.stopwords]
         if not content_claim_tokens:
@@ -318,6 +331,18 @@ class CitationVerifier:
             if any(self._tokens_match(t, c) for c in context_tokens)
         )
         c_lex = contained_hits / len(content_claim_tokens)
+
+        # Direct negation inversion penalty: If claim has opposite polarity and high lexical overlap, reject entailment
+        if claim_has_neg != context_has_neg and c_lex >= 0.40:
+            return False, 0.0
+
+        # Number & Quantity verification: If claim has numbers, ensure they are grounded in context
+        claim_numbers = set(re.findall(r"\b\d+(?:\.\d+)?\b", claim.lower()))
+        if claim_numbers:
+            context_numbers = set(re.findall(r"\b\d+(?:\.\d+)?\b", context.lower()))
+            unsupported_numbers = claim_numbers - context_numbers
+            if unsupported_numbers:
+                return False, 0.0
 
         # Jaccard token overlap
         claim_set = set(claim_tokens)
@@ -339,18 +364,26 @@ class CitationVerifier:
         reference_documents: Optional[dict[str, str]] = None,
     ) -> CitationMetrics:
         """Execute full ALCE citation evaluation and RAGAS faithfulness verification."""
+        if isinstance(ground_truth_context, dict):
+            if reference_documents is None:
+                reference_documents = ground_truth_context
+            ground_truth_context = " ".join(str(v) for v in ground_truth_context.values())
+
         claims = self.segment_claims(response)
         doc_map = reference_documents or {}
 
         def get_context_for_citation(tag: CitationTag) -> str:
+            if not doc_map:
+                return ground_truth_context
             for idx in tag.normalized_indices:
                 if idx in doc_map:
                     return doc_map[idx]
                 clean_idx = re.sub(r"[\[\(\]\)]", "", idx).strip().lower()
                 for k, v in doc_map.items():
-                    if clean_idx in k.lower() or k.lower() in clean_idx:
+                    k_clean = re.sub(r"[\[\(\]\)]", "", str(k)).strip().lower()
+                    if clean_idx == k_clean or clean_idx in k_clean or k_clean in clean_idx:
                         return v
-            return ground_truth_context
+            return ""
 
         factual_claims = [c for c in claims if c.is_factual]
         total_citations_count = 0

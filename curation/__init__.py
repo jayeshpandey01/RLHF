@@ -6,7 +6,7 @@ from curation.filters import C4QualityFilter
 from curation.minhash_lsh import MinHashLSH
 from curation.orchestrator import ContinualDataOrchestrator
 from curation.pipeline import CurationPipeline
-from curation.replay_buffer import ExperienceReplayBuffer
+from curation.replay_buffer import ExperienceReplayBuffer, ModelCollapseGuard, ReplaySample
 
 __all__ = [
     "C4QualityFilter",
@@ -16,5 +16,7 @@ __all__ = [
     "DisjointSet",
     "ClusterDeduplicator",
     "ExperienceReplayBuffer",
+    "ModelCollapseGuard",
+    "ReplaySample",
     "ContinualDataOrchestrator",
 ]

@@ -82,6 +82,16 @@ class TrainingSampleSchema(BaseModel):
         return InstructionExample.from_schema(self)
 
 
+class PreferencePairSchema(BaseModel):
+    """Pairwise preference sample for reward modeling and DPO alignment."""
+
+    prompt: str = Field(..., min_length=1, description="Instruction prompt")
+    chosen: str = Field(..., min_length=1, description="Preferred completion")
+    rejected: str = Field(..., min_length=1, description="Dispreferred completion")
+    margin: float = Field(default=0.0, description="Target preference margin or quality delta")
+    category: str = Field(default="general", description="Domain knowledge category")
+    metadata: dict = Field(default_factory=dict, description="Provenance or annotator metadata")
+
 
 class BenchmarkCaseSchema(BaseModel):
     """Golden evaluation question for regression testing."""

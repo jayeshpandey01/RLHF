@@ -13,6 +13,7 @@ from loguru import logger
 
 from core.schemas import ScrapedDocumentSchema
 from ingestion.provenance import ProvenanceLogger
+from ingestion.sources.base import canonicalize_url
 from ingestion.sources.arxiv import ArXivSource
 from ingestion.sources.crawler import SitemapCrawlerSource
 from ingestion.sources.duckduckgo import DuckDuckGoSource
@@ -139,11 +140,14 @@ class IngestionRouter:
             if not doc.sha256_hash:
                 doc.compute_hash()
 
-            # Filter out already seen hashes to save training compute
-            if self.provenance.is_seen_hash(doc.sha256_hash):
+            clean_url = canonicalize_url(doc.url) or doc.url
+
+            # Filter out already seen hashes or URLs to save training compute
+            if self.provenance.is_seen_hash(doc.sha256_hash) or (clean_url and self.provenance.is_seen_url(clean_url)):
                 logger.debug(f"Skipping duplicate document {doc.sha256_hash[:8]} from {doc.url}")
                 continue
 
+            doc.url = clean_url
             self.provenance.record_document(
                 doc=doc,
                 source_name=source_name,

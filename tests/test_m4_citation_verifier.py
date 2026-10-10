@@ -133,6 +133,24 @@ class TestM4CitationVerifier(unittest.TestCase):
         self.assertEqual(len(metrics.unsupported_claims), 1)
         self.assertIn("1", metrics.hallucinated_citations)
 
+    def test_negation_contradiction_detection(self):
+        """Verify that direct negation inversion ('not improve' vs 'improves') is rejected."""
+        context = "The clinical trial found that the treatment improves survival in the patient cohort."
+        contradictory_claim = "The clinical trial found that the treatment does not improve survival in the patient cohort."
+        is_entailed, score = self.verifier.check_entailment(contradictory_claim, context)
+        self.assertFalse(is_entailed)
+        self.assertEqual(score, 0.0)
+
+    def test_nonexistent_citation_id_rejection(self):
+        """Verify that citing non-existent doc ID [999] fails citation verification."""
+        context = "The study demonstrated significant efficiency gains with attention."
+        response = "The study demonstrated significant efficiency gains with attention [999]."
+        doc_map = {"1": context}
+        metrics = self.verifier.verify_response(response, context, doc_map)
+        self.assertEqual(metrics.valid_citations, 0)
+        self.assertIn("999", metrics.hallucinated_citations)
+        self.assertEqual(metrics.citation_precision, 0.0)
+
     def test_missing_citation_recall_penalty(self):
         """Verify that factual claims lacking citations lower Citation Recall."""
         context = (

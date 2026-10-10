@@ -8,6 +8,7 @@ from core.schemas import (
     CleanedDocumentSchema,
     ChatMessageSchema,
     TrainingSampleSchema,
+    PreferencePairSchema,
     BenchmarkCaseSchema,
     EvaluationReportSchema,
 )
@@ -21,6 +22,7 @@ __all__ = [
     "CleanedDocumentSchema",
     "ChatMessageSchema",
     "TrainingSampleSchema",
+    "PreferencePairSchema",
     "BenchmarkCaseSchema",
     "EvaluationReportSchema",
 ]

@@ -165,6 +165,7 @@ class HarmonizedSFTDataset(Dataset):
         anchor_ratio: float = 0.70,
         epoch_length: int = 1000,
         seed: int = 42,
+        deterministic: bool = False,
     ):
         if not anchor_examples:
             raise ValueError("HarmonizedSFTDataset requires at least one anchor instruction example.")
@@ -174,12 +175,30 @@ class HarmonizedSFTDataset(Dataset):
         self.anchor_ratio = anchor_ratio
         self.epoch_length = epoch_length
         self.rng = random.Random(seed)
+        self.deterministic = bool(deterministic)
+
+        if self.deterministic:
+            self._samples: list[str] = []
+            for _ in range(self.epoch_length):
+                draw_anchor = True
+                if self.web_examples and self.rng.random() > self.anchor_ratio:
+                    draw_anchor = False
+
+                if draw_anchor or not self.web_examples:
+                    example = self.rng.choice(self.anchor_examples)
+                else:
+                    example = self.rng.choice(self.web_examples)
+
+                self._samples.append(ChatMLFormatter.format_dialogue(example.messages))
 
     def __len__(self) -> int:
         return self.epoch_length
 
     def __getitem__(self, idx: int) -> str:
         """Sample an instruction dialogue and return its serialized ChatML string."""
+        if self.deterministic:
+            return self._samples[idx % len(self._samples)]
+
         # Decide whether to draw from anchor or web
         draw_anchor = True
         if self.web_examples and self.rng.random() > self.anchor_ratio:

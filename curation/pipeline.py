@@ -1,6 +1,6 @@
 """End-to-end data curation pipeline connecting quality filtering, contamination checks, and MinHash LSH."""
 
-from typing import Optional
+from typing import Any, Optional
 from loguru import logger
 
 from core.schemas import CleanedDocumentSchema, ScrapedDocumentSchema
@@ -107,6 +107,41 @@ class CurationPipeline:
             f"CurationPipeline: Ingested {len(docs)} -> Accepted {len(accepted)} ({stats['accepted']/max(1, len(docs))*100:.1f}%)"
         )
         return accepted, stats
+
+    def register_benchmark_suite(self, suite: Any) -> int:
+        """Register a GoldenBenchmarkSuite or benchmark cases with the contamination guard.
+
+        Returns:
+            Total number of forbidden 13-grams registered.
+        """
+        if hasattr(suite, "register_with_contamination_guard"):
+            return suite.register_with_contamination_guard(self.contamination_guard)
+        elif hasattr(suite, "cases"):
+            added = 0
+            for case in suite.cases:
+                if hasattr(case, "to_schema"):
+                    added += self.contamination_guard.add_benchmark_case(case.to_schema())
+                elif hasattr(case, "question"):
+                    added += self.contamination_guard.add_benchmark_case(case)
+            return added
+        elif hasattr(suite, "test_cases"):
+            added = 0
+            for case in suite.test_cases:
+                text = f"{getattr(case, 'prompt', '')} {getattr(case, 'ground_truth', '')}"
+                if text.strip():
+                    added += self.contamination_guard.add_benchmark_text(text)
+            return added
+        elif isinstance(suite, (list, tuple)):
+            added = 0
+            for case in suite:
+                if hasattr(case, "to_schema"):
+                    added += self.contamination_guard.add_benchmark_case(case.to_schema())
+                elif hasattr(case, "question"):
+                    added += self.contamination_guard.add_benchmark_case(case)
+                elif isinstance(case, str):
+                    added += self.contamination_guard.add_benchmark_text(case)
+            return added
+        return 0
 
     def clear(self) -> None:
         """Reset internal deduplication and contamination indices."""
