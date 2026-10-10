@@ -37,7 +37,6 @@
 
 ---
 
-
 # Chapter 1: System Architecture & Continual Learning Topology
 
 ### 0.1 End-to-End Dataflow Topology
@@ -58,12 +57,22 @@
 
 ### 0.2 Hybrid Retrieval Mathematics
 For query $q$ and document $d \in \mathcal{D}$, an optional convex score fusion can combine lexical BM25 and cosine similarity:
-$$S_{\text{hybrid}}(q, d) = \alpha \cdot \hat{S}_{\text{BM25}}(q, d) + (1 - \alpha) \cdot \hat{S}_{\text{dense}}(q, d), \quad \alpha \in [0, 1]$$
+
+$$
+S_{\text{hybrid}}(q, d) = \alpha \cdot \hat{S}_{\text{BM25}}(q, d) + (1 - \alpha) \cdot \hat{S}_{\text{dense}}(q, d), \quad \alpha \in [0, 1]
+$$
+
 where scores are min-max normalized over candidate pool $\mathcal{C}$:
-$$\hat{S}(q, d) = \frac{S(q, d) - \min_{c \in \mathcal{C}} S(q, c)}{\max_{c \in \mathcal{C}} S(q, c) - \min_{c \in \mathcal{C}} S(q, c) + \epsilon}$$
+
+$$
+\hat{S}(q, d) = \frac{S(q, d) - \min_{c \in \mathcal{C}} S(q, c)}{\max_{c \in \mathcal{C}} S(q, c) - \min_{c \in \mathcal{C}} S(q, c) + \epsilon}
+$$
 
 The current implementation combines BM25 and deterministic character n-gram hash cosine rankings using Reciprocal Rank Fusion (RRF); it does not use the min-max interpolation above or a pretrained dense embedding model. RRF provides rank-based combination:
-$$\text{RRF}(d) = \sum_{m \in \{\text{lexical}, \text{dense}\}} \frac{1}{k + \text{rank}_m(d)}, \quad k = 60$$
+
+$$
+\text{RRF}(d) = \sum_{m \in \{\text{lexical}, \text{dense}\}} \frac{1}{k + \text{rank}_m(d)}, \quad k = 60
+$$
 
 ### 0.3 Model Promotion: Current Python Path and Ollama Gap
 The default gateway now collects/curates web documents on `/query`, persists them in `data/knowledge_corpus.jsonl`, indexes them for retrieval, and invokes the active Ollama model with citation instructions. `POST /trigger_learning` queues a separate Hugging Face PEFT/LoRA SFT worker. It evaluates the candidate against the Ollama anchor using the golden suite and `StatisticalReleaseGate`; only `PROCEED_DEPLOY` candidates are merged, passed to `ollama create`, and hot-swapped while in-flight gateway readers finish. Job state is process-local and available at `GET /learning/jobs/{job_id}`.
@@ -98,14 +107,22 @@ Strict data integrity contracts govern every transition:
 1. **Linnainmaa, S. (1970)**: *The representation of the cumulative rounding error of an algorithm as a Taylor expansion of the local rounding errors*. Master's thesis, Univ. of Helsinki. (Invented reverse-mode automatic differentiation).
 2. **Baur, W., & Strassen, V. (1983)**: *The complexity of partial derivatives*. Theoretical Computer Science, 22(3), 317-330.
    - **Baur-Strassen Theorem**: For any computational graph evaluating $f(x_1, \dots, x_n)$ in $C$ elementary operations, all $n$ partial derivatives $\nabla f$ can be evaluated in:
-     $$\text{Cost}(\nabla f) \le 5 \times \text{Cost}(f)$$
+
+$$
+\text{Cost}(\nabla f) \le 5 \times \text{Cost}(f)
+$$
+
    - This single theorem makes modern LLM training computationally feasible. Forward-mode would require $\mathcal{O}(n \cdot \text{Cost}(f))$, taking millennia for billions of parameters.
 3. **Rumelhart, D. E., Hinton, G. E., & Williams, R. J. (1986)**: *Learning representations by back-propagating errors*. Nature, 323, 533-536.
 
 ### 2.2 Reverse DAG Traversal & The Multivariate Adjoint Equation
 A scalar computation $\mathcal{L} = f(x_1, \dots, x_n)$ forms a Directed Acyclic Graph (DAG) with nodes $\mathcal{V}$ and edges $\mathcal{E}$.
 For any node $v \in \mathcal{V}$, its adjoint $\bar{v} = \frac{\partial \mathcal{L}}{\partial v}$ is:
-$$\bar{v} = \sum_{u \in \text{children}(v)} \bar{u} \cdot \frac{\partial u}{\partial v}$$
+
+$$
+\bar{v} = \sum_{u \in \text{children}(v)} \bar{u} \cdot \frac{\partial u}{\partial v}
+$$
+
 To evaluate $\bar{v}$ correctly, all children $u$ must evaluate before $v$. This necessitates processing nodes in **reverse topological order**, established via Depth-First Search (DFS).
 
 ### 2.3 Elementary Operation Adjoints
@@ -121,17 +138,37 @@ To evaluate $\bar{v}$ correctly, all children $u$ must evaluate before $v$. This
 
 ### 2.4 Taylor Series Central Difference Bound ($\mathcal{O}(h^2)$)
 To verify analytical gradients against numerical approximation:
-$$f'(x) \approx \frac{f(x + h) - f(x - h)}{2h}$$
+
+$$
+f'(x) \approx \frac{f(x + h) - f(x - h)}{2h}
+$$
 
 #### Proof of $\mathcal{O}(h^2)$ Truncation Bound:
 Expanding $f(x \pm h)$ around $x$:
-$$f(x + h) = f(x) + h f'(x) + \frac{h^2}{2} f''(x) + \frac{h^3}{6} f'''(\xi_1)$$
-$$f(x - h) = f(x) - h f'(x) + \frac{h^2}{2} f''(x) - \frac{h^3}{6} f'''(\xi_2)$$
+
+$$
+f(x + h) = f(x) + h f'(x) + \frac{h^2}{2} f''(x) + \frac{h^3}{6} f'''(\xi_1)
+$$
+
+$$
+f(x - h) = f(x) - h f'(x) + \frac{h^2}{2} f''(x) - \frac{h^3}{6} f'''(\xi_2)
+$$
+
 Subtracting yields:
-$$f(x + h) - f(x - h) = 2h f'(x) + \frac{h^3}{6}(f'''(\xi_1) + f'''(\xi_2))$$
-$$\left| \frac{f(x + h) - f(x - h)}{2h} - f'(x) \right| = \frac{h^2}{6} |f'''(\xi)| = \mathcal{O}(h^2)$$
+
+$$
+f(x + h) - f(x - h) = 2h f'(x) + \frac{h^3}{6}(f'''(\xi_1) + f'''(\xi_2))
+$$
+
+$$
+\left| \frac{f(x + h) - f(x - h)}{2h} - f'(x) \right| = \frac{h^2}{6} |f'''(\xi)| = \mathcal{O}(h^2)
+$$
+
 For step size $h = 10^{-5}$, truncation error is bounded by $\mathcal{O}(10^{-10})$. We verify analytical gradients with strict tolerance:
-$$\epsilon_{\text{rel}} = \frac{|\nabla_{\text{analytical}} - \nabla_{\text{numerical}}|}{\max(|\nabla_{\text{analytical}}|, |\nabla_{\text{numerical}}|, 10^{-8})} < 10^{-5}$$
+
+$$
+\epsilon_{\text{rel}} = \frac{|\nabla_{\text{analytical}} - \nabla_{\text{numerical}}|}{\max(|\nabla_{\text{analytical}}|, |\nabla_{\text{numerical}}|, 10^{-8})} < 10^{-5}
+$$
 
 ---
 
@@ -139,26 +176,56 @@ $$\epsilon_{\text{rel}} = \frac{|\nabla_{\text{analytical}} - \nabla_{\text{nume
 
 ### 3.1 Bigram Statistical Baseline & Maximum Likelihood Estimation (MLE)
 Given a sequence of discrete tokens $(w_1, \dots, w_N) \in \mathbb{V}^N$, the first-order Markov bigram assumption is:
-$$P(w_1, \dots, w_N) = \prod_{t=1}^N P(w_t \mid w_{t-1})$$
+
+$$
+P(w_1, \dots, w_N) = \prod_{t=1}^N P(w_t \mid w_{t-1})
+$$
+
 The empirical transition probability under MLE is:
-$$\hat{P}_{\text{MLE}}(w_t = j \mid w_{t-1} = i) = \frac{C(i, j)}{\sum_{k=1}^V C(i, k)}$$
+
+$$
+\hat{P}_{\text{MLE}}(w_t = j \mid w_{t-1} = i) = \frac{C(i, j)}{\sum_{k=1}^V C(i, k)}
+$$
+
 where $C(i, j)$ is the count of pair $(i, j)$ in the corpus.
 
 #### Empirical Cross-Entropy & Perplexity:
-$$H_{\text{corpus}} = -\frac{1}{N} \sum_{t=1}^N \ln \hat{P}_{\text{MLE}}(w_t \mid w_{t-1})$$
-$$\text{Perplexity} = \exp(H_{\text{corpus}})$$
+
+$$
+H_{\text{corpus}} = -\frac{1}{N} \sum_{t=1}^N \ln \hat{P}_{\text{MLE}}(w_t \mid w_{t-1})
+$$
+
+$$
+\text{Perplexity} = \exp(H_{\text{corpus}})
+$$
+
 For character-level TinyShakespeare, the empirical statistical bigram entropy is **$1.7524$ nats** ($\text{PPL} \approx 5.77$).
 
 ### 3.2 Log-Sum-Exp Trick for Softmax Stability
 Unnormalized logits $z \in \mathbb{R}^V$ evaluate probability:
-$$P_i = \frac{e^{z_i}}{\sum_{j=1}^V e^{z_j}}$$
+
+$$
+P_i = \frac{e^{z_i}}{\sum_{j=1}^V e^{z_j}}
+$$
+
 Direct calculation overflows in float32 when $z_i > 88.7$. By factoring $m = \max_k z_k$:
-$$\ln\left(\sum_{j=1}^V e^{z_j}\right) = m + \ln\left(\sum_{j=1}^V e^{z_j - m}\right)$$
-$$\text{CrossEntropy}(z, y) = m + \ln\left(\sum_{j=1}^V e^{z_j - m}\right) - z_y$$
+
+$$
+\ln\left(\sum_{j=1}^V e^{z_j}\right) = m + \ln\left(\sum_{j=1}^V e^{z_j - m}\right)
+$$
+
+$$
+\text{CrossEntropy}(z, y) = m + \ln\left(\sum_{j=1}^V e^{z_j - m}\right) - z_y
+$$
+
 Since $z_j - m \le 0$, $e^{z_j - m} \in (0, 1]$, making overflow impossible.
 
 ### 3.3 Analytical Logit Gradient
-$$\frac{\partial \mathcal{L}}{\partial z_i} = P_i - \mathbb{I}(i = y)$$
+
+$$
+\frac{\partial \mathcal{L}}{\partial z_i} = P_i - \mathbb{I}(i = y)
+$$
+
 - Target logit ($i = y$): $\frac{\partial \mathcal{L}}{\partial z_y} = P_y - 1 \le 0$ (gradient descent pushes logit up).
 - Non-target logit ($i \ne y$): $\frac{\partial \mathcal{L}}{\partial z_i} = P_i \ge 0$ (gradient descent pushes logit down).
 
@@ -167,25 +234,53 @@ $$\frac{\partial \mathcal{L}}{\partial z_i} = P_i - \mathbb{I}(i = y)$$
 # Chapter 5: Causal Multi-Head Self-Attention & Algorithmic KV-Caching
 
 ### 4.1 Scaled Dot-Product Attention Equation
-$$\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{Q K^T}{\sqrt{d_k}} + M\right) V$$
+
+$$
+\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{Q K^T}{\sqrt{d_k}} + M\right) V
+$$
+
 where $Q, K, V \in \mathbb{R}^{B \times T \times d_k}$ and $M \in \mathbb{R}^{T \times T}$ is the causal lower-triangular mask.
 
 ### 4.2 Proof: Variance Preservation under Scaling Factor $\frac{1}{\sqrt{d_k}}$
 Let $q, k \in \mathbb{R}^{d_k}$ be independent zero-mean vectors with unit variance components:
-$$\mathbb{E}[q_i] = \mathbb{E}[k_i] = 0, \quad \text{Var}(q_i) = \text{Var}(k_i) = 1, \quad \forall i \in \{1, \dots, d_k\}$$
+
+$$
+\mathbb{E}[q_i] = \mathbb{E}[k_i] = 0, \quad \text{Var}(q_i) = \text{Var}(k_i) = 1, \quad \forall i \in \{1, \dots, d_k\}
+$$
+
 The inner product is $S = q^T k = \sum_{i=1}^{d_k} q_i k_i$.
 1. $\mathbb{E}[S] = \sum_{i=1}^{d_k} \mathbb{E}[q_i] \mathbb{E}[k_i] = 0$.
 2. Because $q_i, k_i$ are independent:
-   $$\text{Var}(q_i k_i) = \mathbb{E}[(q_i k_i)^2] - (\mathbb{E}[q_i k_i])^2 = \mathbb{E}[q_i^2]\mathbb{E}[k_i^2] - 0 = 1 \cdot 1 = 1$$
-   $$\text{Var}(S) = \text{Var}\left(\sum_{i=1}^{d_k} q_i k_i\right) = \sum_{i=1}^{d_k} \text{Var}(q_i k_i) = d_k$$
+
+$$
+\text{Var}(q_i k_i) = \mathbb{E}[(q_i k_i)^2] - (\mathbb{E}[q_i k_i])^2 = \mathbb{E}[q_i^2]\mathbb{E}[k_i^2] - 0 = 1 \cdot 1 = 1
+$$
+
+$$
+\text{Var}(S) = \text{Var}\left(\sum_{i=1}^{d_k} q_i k_i\right) = \sum_{i=1}^{d_k} \text{Var}(q_i k_i) = d_k
+$$
+
 Without scaling, $\text{Var}(S) = d_k$. For $d_k = 64$, $\sigma = 8$. Softmax on values with standard deviation 8 saturates at 0 and 1, extinguishing gradients.
 Scaling by $\frac{1}{\sqrt{d_k}}$ ensures:
-$$\text{Var}\left(\frac{S}{\sqrt{d_k}}\right) = \frac{1}{d_k} \text{Var}(S) = \frac{d_k}{d_k} = 1 \quad \blacksquare$$
+
+$$
+\text{Var}\left(\frac{S}{\sqrt{d_k}}\right) = \frac{1}{d_k} \text{Var}(S) = \frac{d_k}{d_k} = 1 \quad \blacksquare
+$$
 
 ### 4.3 Causal Masking Tensor Algebra
-$$M_{ij} = \begin{cases} 0 & \text{if } j \le i \\ -\infty & \text{if } j > i \end{cases}$$
+
+$$
+M_{ij} = \begin{cases}
+  0 & \text{if } j \le i \\
+  -\infty & \text{if } j > i
+\end{cases}
+$$
+
 When passed through softmax:
-$$\lim_{M_{ij} \to -\infty} \frac{\exp(A_{ij} + M_{ij})}{\sum_k \exp(A_{ik} + M_{ik})} = 0, \quad \forall j > i$$
+
+$$
+\lim_{M_{ij} \to -\infty} \frac{\exp(A_{ij} + M_{ij})}{\sum_k \exp(A_{ik} + M_{ik})} = 0, \quad \forall j > i
+$$
 
 ### 4.4 KV-Cache Algorithmic Optimization
 In autoregressive decoding, token $T+1$ only requires computing query $Q_{T+1} \in \mathbb{R}^{1 \times d_k}$. Keys and values for tokens $1 \dots T$ remain unchanged because causal masking prevents future tokens from altering past keys.
@@ -199,35 +294,70 @@ In autoregressive decoding, token $T+1$ only requires computing query $Q_{T+1} \
 
 ### 5.1 Pre-LayerNorm Gradient Highway Theorem (Xiong et al., 2020)
 In Pre-LayerNorm:
-$$x_l = x_{l-1} + f_l(\text{LN}(x_{l-1}))$$
+
+$$
+x_l = x_{l-1} + f_l(\text{LN}(x_{l-1}))
+$$
+
 Expanding the recursion from layer $0$ to layer $L$:
-$$x_L = x_0 + \sum_{l=1}^L f_l(\text{LN}(x_{l-1}))$$
+
+$$
+x_L = x_0 + \sum_{l=1}^L f_l(\text{LN}(x_{l-1}))
+$$
+
 Differentiating with respect to $x_0$:
-$$\frac{\partial x_L}{\partial x_0} = I + \sum_{l=1}^L \frac{\partial f_l(\text{LN}(x_{l-1}))}{\partial x_0}$$
+
+$$
+\frac{\partial x_L}{\partial x_0} = I + \sum_{l=1}^L \frac{\partial f_l(\text{LN}(x_{l-1}))}{\partial x_0}
+$$
+
 The presence of the identity matrix $I$ ensures that even if sublayer transformations have vanishing gradients, the error signal propagates directly from output to token embeddings without attenuation. In Post-LN, the gradient is multiplied by $\prod_{l=1}^L J_{\text{LN}}$, which decays as $\mathcal{O}(L^{-1/2})$, causing training instability.
 
 ### 5.2 Residual Variance Scaling ($1/\sqrt{2L}$) (Radford et al., 2019)
 Across $L$ transformer blocks with $2L$ residual additions:
-$$\text{Var}(x_L) \approx (1 + 2L) \sigma_0^2$$
+
+$$
+\text{Var}(x_L) \approx (1 + 2L) \sigma_0^2
+$$
+
 To maintain unit variance at initialization, output projections $W_O$ (in MHA) and $W_2$ (in MLP) are initialized with standard deviation:
-$$W_{\text{residual}} \sim \mathcal{N}\left(0, \frac{\sigma_0^2}{2L}\right) = \frac{1}{\sqrt{2L}} \cdot \mathcal{N}(0, 0.02^2)$$
+
+$$
+W_{\text{residual}} \sim \mathcal{N}\left(0, \frac{\sigma_0^2}{2L}\right) = \frac{1}{\sqrt{2L}} \cdot \mathcal{N}(0, 0.02^2)
+$$
 
 ### 5.3 Gaussian Error Linear Unit (GELU) (Hendrycks & Gimpel, 2016)
-$$\text{GELU}(x) = x \Phi(x) = x \int_{-\infty}^x \frac{1}{\sqrt{2\pi}} e^{-\frac{t^2}{2}} dt \approx 0.5 x \left(1 + \tanh\left(\sqrt{\frac{2}{\pi}} (x + 0.044715 x^3)\right)\right)$$
+
+$$
+\text{GELU}(x) = x \Phi(x) = x \int_{-\infty}^x \frac{1}{\sqrt{2\pi}} e^{-\frac{t^2}{2}} dt \approx 0.5 x \left(1 + \tanh\left(\sqrt{\frac{2}{\pi}} (x + 0.044715 x^3)\right)\right)
+$$
+
 Unlike ReLU ($\max(0, x)$), which has a hard zero gradient for $x < 0$, GELU maintains small, smooth non-zero gradients for moderately negative values, preventing dead neurons.
 
 ### 5.4 Weight Tying (Press & Wolf, 2017)
-$$W_U \equiv W_E$$
+
+$$
+W_U \equiv W_E
+$$
+
 The output linear unembedding layer shares its weight matrix with the input token embedding layer. This cuts vocabulary projection parameters by 50% and grounds token predictions in the semantic input embedding space.
 
 ### 5.5 AdamW Decoupled Weight Decay (Loshchilov & Hutter, 2019)
-$$\theta_t = \theta_{t-1} - \eta_t \lambda \theta_{t-1} - \eta_t \frac{\hat{m}_t}{\sqrt{\hat{v}_t} + \epsilon}$$
+
+$$
+\theta_t = \theta_{t-1} - \eta_t \lambda \theta_{t-1} - \eta_t \frac{\hat{m}_t}{\sqrt{\hat{v}_t} + \epsilon}
+$$
+
 - **2D Weight Matrices**: Linear and embedding layers receive weight decay $\lambda = 0.01$.
 - **1D Parameters**: LayerNorm scales $\gamma$, shifts $\beta$, and biases are explicitly excluded from weight decay ($\lambda = 0.0$) to prevent distortion of variance normalization.
 
 ### 5.6 Information Entropy Bounds
 For character vocabulary $V = 65$:
-$$\mathcal{L}_{\text{init}} = -\ln(1/65) = \ln(65) \approx 4.17438 \text{ nats}$$
+
+$$
+\mathcal{L}_{\text{init}} = -\ln(1/65) = \ln(65) \approx 4.17438 \text{ nats}
+$$
+
 - Empirical Step 0 loss: **$4.2328$ nats** ($\Delta = 0.058$).
 - After 100 steps on MPS: **$2.6328$ nats** at 33.1 steps/second.
 
@@ -266,27 +396,48 @@ Shumailov et al. analyze model collapse under explicit assumptions about recursi
 
 #### 2. Experience Replay Convex Combination Buffer
 As a practical mitigation for forgetting, training mini-batches are drawn from a convex combination buffer:
-$$\mathcal{D}_{\text{train}} = \alpha \cdot \mathcal{D}_{\text{anchor}} + (1 - \alpha) \cdot \mathcal{D}_{\text{web}}, \quad \alpha = 0.70$$
+
+$$
+\mathcal{D}_{\text{train}} = \alpha \cdot \mathcal{D}_{\text{anchor}} + (1 - \alpha) \cdot \mathcal{D}_{\text{web}}, \quad \alpha = 0.70
+$$
+
 Anchor examples retain a share of training exposure while 30% web data introduces new domain content. Replay is not a proof that forgetting or model collapse is prevented.
 
 #### 3. $k$-Shingling & Jaccard Similarity
 A document $d$ is mapped to a set of contiguous word shingles $S_k(d)$:
-$$S_k(d) = \{ (w_i, w_{i+1}, \dots, w_{i+k-1}) \mid 1 \le i \le |d| - k + 1 \}$$
+
+$$
+S_k(d) = \{ (w_i, w_{i+1}, \dots, w_{i+k-1}) \mid 1 \le i \le |d| - k + 1 \}
+$$
+
 where $k = 5$ words balances phrase-level semantic preservation with computational efficiency.
 The Jaccard similarity between documents $A$ and $B$ is:
-$$J(A, B) = \frac{|S_k(A) \cap S_k(B)|}{|S_k(A) \cup S_k(B)|} \in [0, 1]$$
+
+$$
+J(A, B) = \frac{|S_k(A) \cap S_k(B)|}{|S_k(A) \cup S_k(B)|} \in [0, 1]
+$$
 
 #### 4. MinHash Theorem (Broder, 1997)
 Let $\pi$ be a uniformly random permutation of the shingle universe and define $h_{\min}(A) = \min_{s \in A} \pi(s)$. For ideal random permutations:
-$$\mathbb{P}[h_{\min}(A) = h_{\min}(B)] = J(A, B)$$
+
+$$
+\mathbb{P}[h_{\min}(A) = h_{\min}(B)] = J(A, B)
+$$
 
 Practical implementations approximate the random-permutation premise with finite hash families. Pairwise independence by itself does not establish exact min-wise independence. A common affine hash construction is:
-$$h_i(x) = (a_i \cdot x + b_i) \bmod p$$
+
+$$
+h_i(x) = (a_i \cdot x + b_i) \bmod p
+$$
+
 where $p$ is a Mersenne prime ($p = 2^{61} - 1$), $a_i \in \{1, \dots, p-1\}$, and $b_i \in \{0, \dots, p-1\}$.
 
 **Proof for the ideal permutation**: Consider the union $U = S_k(A) \cup S_k(B)$. Every element in $U$ is equally likely to achieve the minimum under a uniformly random permutation. The two minima agree exactly when that element belongs to $S_k(A) \cap S_k(B)$.
 Since there are $|S_k(A) \cap S_k(B)|$ favorable elements out of $|U| = |S_k(A) \cup S_k(B)|$ total elements:
-$$\mathbb{P}[h_{\min}(A) = h_{\min}(B)] = \frac{|S_k(A) \cap S_k(B)|}{|S_k(A) \cup S_k(B)|} = J(A, B) \quad \blacksquare$$
+
+$$
+\mathbb{P}[h_{\min}(A) = h_{\min}(B)] = \frac{|S_k(A) \cap S_k(B)|}{|S_k(A) \cup S_k(B)|} = J(A, B) \quad \blacksquare
+$$
 
 #### 5. Locality Sensitive Hashing (LSH) Banding S-Curve Derivation
 We construct a signature matrix of $K = 128$ MinHash values per document. We partition the signature into $b = 32$ bands, each containing $r = 4$ rows ($K = b \cdot r = 128$).
@@ -295,27 +446,45 @@ Two documents $A$ and $B$ are declared candidate duplicates if their signatures 
 2. Probability of not matching in a given band: $1 - s^r$.
 3. Probability of failing to match across all $b$ independent bands: $(1 - s^r)^b$.
 4. **Probability of being identified as a candidate pair**:
-   $$P_{\text{candidate}}(s) = 1 - (1 - s^r)^b$$
+
+$$
+P_{\text{candidate}}(s) = 1 - (1 - s^r)^b
+$$
 
 **Inflection Threshold**:
 The midpoint threshold $s^*$ where the second derivative changes sign is:
-$$s^* = \left( \frac{1}{b} \right)^{1/r} = \left(\frac{1}{32}\right)^{1/4} \approx 0.4204$$
+
+$$
+s^* = \left( \frac{1}{b} \right)^{1/r} = \left(\frac{1}{32}\right)^{1/4} \approx 0.4204
+$$
+
 For near-duplicates ($s \ge 0.80$):
-$$P(0.80) = 1 - (1 - 0.80^4)^{32} = 1 - (1 - 0.4096)^{32} = 1 - (0.5904)^{32} \approx 1 - 5.4 \times 10^{-8} \approx 0.99999995$$
+
+$$
+P(0.80) = 1 - (1 - 0.80^4)^{32} = 1 - (1 - 0.4096)^{32} = 1 - (0.5904)^{32} \approx 1 - 5.4 \times 10^{-8} \approx 0.99999995
+$$
+
 The false negative rate is less than $1 \text{ in } 18{,}000{,}000$!
 
 #### 6. C4 Heuristic Quality Filtering Bounds
 Every scraped document must pass five deterministic bounds:
 1. **Word Count Bound**: $50 \le N_{\text{words}} \le 100{,}000$.
 2. **Line Repetition Rate**:
-   $$R_{\text{line}} = 1 - \frac{|\text{unique lines}|}{|\text{total lines}|} \le 0.20$$
+
+$$
+R_{\text{line}} = 1 - \frac{|\text{unique lines}|}{|\text{total lines}|} \le 0.20
+$$
+
 3. **Character Repetition Rate**: Fraction of characters in the top duplicated 2-grams, 3-grams, and 4-grams $\le 0.15$.
 4. **Stopword Density**: English stopword count $\ge 10\%$ of total words (filters out SEO spam and keyword stuffing).
 5. **Terminal Punctuation Ratio**: Fraction of sentences ending in valid punctuation (`.`, `!`, `?`, `"`, `'`) $\ge 0.70$.
 
 #### 7. Benchmark Contamination Guard (Dodge et al., 2021)
 Given a set of held-out evaluation test prompts $\mathcal{Q}_{\text{test}}$, a document $d$ is strictly quarantined if any 13-gram from $\mathcal{Q}_{\text{test}}$ appears in $d$:
-$$\text{Contaminated}(d) = \mathbb{I}\left( \exists g \in \text{13-grams}(\mathcal{Q}_{\text{test}}) : g \in d \right)$$
+
+$$
+\text{Contaminated}(d) = \mathbb{I}\left( \exists g \in \text{13-grams}(\mathcal{Q}_{\text{test}}) : g \in d \right)
+$$
 
 ### 7.4 Section 7.1: Multi-Source Web & Geospatial Ingestion Architecture
 
@@ -362,9 +531,17 @@ flowchart TD
 
 ##### A. Geospatial & Map Engine: OpenStreetMap (Overpass API & Nominatim)
 Retrieves exact topological features, geographic coordinates $(\text{lat}, \text{lon})$, bounding boxes, and point-of-interest (POI) relational graphs:
-$$\text{Query}_{\text{Overpass}} = \text{[out:json][timeout:25];} \left(\text{node}[\text{amenity}=\dots](\text{bbox}); \text{way}[\text{highway}=\dots](\text{bbox});\right); \text{out body;}$$
+
+$$
+\text{Query}_{\text{Overpass}} = \text{[out:json][timeout:25];} \left(\text{node}[\text{amenity}=\dots](\text{bbox}); \text{way}[\text{highway}=\dots](\text{bbox});\right); \text{out body;}
+$$
+
 - **Data Normalization**: Serialized into structured GeoJSON and natural language spatial triples:
-  $$\langle \text{Feature}, \, \text{Coordinates } (\phi, \lambda), \, \text{Tags } \{\text{highway}, \text{population}, \dots\} \rangle$$
+
+$$
+\langle \text{Feature}, \, \text{Coordinates } (\phi, \lambda), \, \text{Tags } \{\text{highway}, \text{population}, \dots\} \rangle
+$$
+
 - **Wikipedia Geosearch Integration**: Queries articles within radius $r$ around coordinates $(\phi, \lambda)$:
   `GET https://en.wikipedia.org/w/api.php?action=query&list=geosearch&gscoord=lat|lon&gsradius=10000`
   Provides rich historical, cultural, and factual context anchored to exact geospatial features.
@@ -383,17 +560,30 @@ Wikipedia provides authoritative, neutral, peer-reviewed content free from comme
 ##### D. Technical Web Crawler: Sitemap Discovery + Trafilatura
 Directly ingests authoritative documentation hubs (e.g., Python, PyTorch, Hugging Face, Linux man pages) via XML sitemaps (`/sitemap.xml`) rather than relying on noisy search results.
 - **Trafilatura DOM Parsing**: Computes Text-Density Ratio ($TDR$) to prune navigation and ads:
-  $$TDR(node) = \frac{\text{Length of visible text in } node}{\text{Total HTML characters in } node + \epsilon}$$
+
+$$
+TDR(node) = \frac{\text{Length of visible text in } node}{\text{Total HTML characters in } node + \epsilon}
+$$
 
 ##### E. Auxiliary Search Engine: DuckDuckGo with Randomized Jitter
 Acts as a fallback discovery mechanism for general queries:
-$$t_{\text{wait}}(k) = \min\left(t_{\max}, \, t_{\text{base}} \cdot 2^k + \mathcal{U}(0, 1)\right)$$
+
+$$
+t_{\text{wait}}(k) = \min\left(t_{\max}, \, t_{\text{base}} \cdot 2^k + \mathcal{U}(0, 1)\right)
+$$
+
 where $k$ is retry count, $t_{\text{base}} = 1.5\text{s}$, and $t_{\max} = 15.0\text{s}$.
 
 #### 4. Cryptographic Provenance Manifest
 Every extracted document records an immutable entry in `data/provenance_manifest.jsonl`:
-$$\text{SHA256} = \text{hashlib.sha256}(\text{clean\_text.encode('utf-8')}).\text{hexdigest}()$$
-$$\text{Manifest Entry} = \langle \text{Source Type}, \, \text{URL/URI}, \, \text{Timestamp}, \, \text{HTTP Status}, \, \text{Content Length}, \, \text{SHA256}, \, \text{Metadata} \rangle$$
+
+$$
+\text{SHA256} = \text{hashlib.sha256}(\text{clean\_text.encode('utf-8')}).\text{hexdigest}()
+$$
+
+$$
+\text{Manifest Entry} = \langle \text{Source Type}, \, \text{URL/URI}, \, \text{Timestamp}, \, \text{HTTP Status}, \, \text{Content Length}, \, \text{SHA256}, \, \text{Metadata} \rangle
+$$
 
 ### 6.5 Modern AI Platform Architectures for Web Search & Ingestion
 
@@ -417,7 +607,10 @@ Demonstrated that language models can teach themselves to invoke search APIs in 
 1. The model proposes inline API calls: `<search>query</search>`.
 2. The search API executes and returns results: `<search>query</search> -> [results]`.
 3. The API call is retained in the training set **if and only if** conditioning on the search result strictly reduces the cross-entropy loss on predicting subsequent tokens:
-   $$\mathcal{L}_{\text{with\_tool}} < \min\left(\mathcal{L}_{\text{without\_tool}}, \, \mathcal{L}_{\text{empty\_tool}}\right) - \tau$$
+
+$$
+\mathcal{L}_{\text{with\_tool}} < \min\left(\mathcal{L}_{\text{without\_tool}}, \, \mathcal{L}_{\text{empty\_tool}}\right) - \tau
+$$
 
 #### 4. Self-RAG (Asai et al., 2023)
 Introduced self-reflective retrieval tokens where the model learns when to retrieve dynamically:
@@ -435,9 +628,17 @@ Frontier post-training (DeepSeek Search-R1 / AlphaZero-style Search Agents, 2024
 #### 1. The Search-RL Markov Decision Process (MDP)
 - **State $s_t$**: User question $q$ concatenated with reasoning history $r_{<t}$ and any retrieved documents $D_{<t}$.
 - **Action $a_t$**: The policy generates standard reasoning tokens OR emits an explicit search action:
-  $$a_t = \text{"<search>"} \circ q_{\text{search}} \circ \text{"</search>"}$$
+
+$$
+a_t = \text{"<search>"} \circ q_{\text{search}} \circ \text{"</search>"}
+$$
+
 - **Environment Transition $\mathcal{T}(s_t, a_t)$**: When `</search>` is generated, the policy halts generation. The environment executes $q_{\text{search}}$ against the Multi-Source Ingestion Router (OpenStreetMap / Wikipedia / ArXiv / Web) and injects the top passages into the context:
-  $$s_{t+1} = s_t \circ a_t \circ \text{"<result>"} \circ D_{\text{retrieved}} \circ \text{"</result>"}$$
+
+$$
+s_{t+1} = s_t \circ a_t \circ \text{"<result>"} \circ D_{\text{retrieved}} \circ \text{"</result>"}
+$$
+
 - **Trajectory Rollout**: The policy resumes reasoning `<think> ... </think>` until it produces the final answer with citations.
 
 ```mermaid
@@ -465,24 +666,43 @@ sequenceDiagram
 
 #### 2. Multi-Objective Verifiable Reward Function for Search-RL
 Unlike open-ended creative writing which requires subjective reward models, Search-RL optimizes three objective, verifiable reward signals:
-$$R(y, D, N_{\text{searches}}) = w_{\text{acc}} \cdot r_{\text{acc}} + w_{\text{cite}} \cdot r_{\text{cite}} - w_{\text{cost}} \cdot r_{\text{cost}}$$
+
+$$
+R(y, D, N_{\text{searches}}) = w_{\text{acc}} \cdot r_{\text{acc}} + w_{\text{cite}} \cdot r_{\text{cite}} - w_{\text{cost}} \cdot r_{\text{cost}}
+$$
 
 1. **Rule-Based Accuracy Reward ($r_{\text{acc}} \in \{0, 1\}$)**:
    For factual/geospatial queries with known ground truth:
-   $$r_{\text{acc}} = \mathbb{I}\left(\text{extract\_answer}(y) == y_{\text{truth}}\right)$$
+
+$$
+r_{\text{acc}} = \mathbb{I}\left(\text{extract\_answer}(y) == y_{\text{truth}}\right)
+$$
+
 2. **Citation Faithfulness / Entailment Reward ($r_{\text{cite}} \in [0, 1]$)**:
    Every cited claim $c_i$ in $y$ must be logically entailed by the retrieved passage $p_i \in D$:
-   $$r_{\text{cite}} = \frac{1}{|C|} \sum_{i=1}^{|C|} \mathbb{P}_{\text{NLI}}\left(p_i \models c_i\right)$$
+
+$$
+r_{\text{cite}} = \frac{1}{|C|} \sum_{i=1}^{|C|} \mathbb{P}_{\text{NLI}}\left(p_i \models c_i\right)
+$$
+
    where $\mathbb{P}_{\text{NLI}}$ is a natural language inference entailment probability. Hallucinated citations or ungrounded claims receive $r_{\text{cite}} = 0$.
 3. **Search Cost & Efficiency Penalty ($r_{\text{cost}} \ge 0$)**:
    To prevent the model from query-spamming or querying the web for trivia it already knows in parametric memory:
-   $$r_{\text{cost}} = \gamma \cdot N_{\text{searches}}$$
+
+$$
+r_{\text{cost}} = \gamma \cdot N_{\text{searches}}
+$$
+
    This incentivizes the model to search **only when necessary** and formulate **maximally concise, targeted queries**.
 
 #### 3. Critic-Free Optimization via GRPO
 Using **Group Relative Policy Optimization (GRPO)**, we sample $G = 8$ search-and-reasoning trajectories $\{o_1, \dots, o_G\}$ for the same prompt $q$.
 The advantage for trajectory $i$ is calculated relative to the group mean:
-$$A_i = \frac{R_i - \text{mean}(\{R_1, \dots, R_G\})}{\text{std}(\{R_1, \dots, R_G\}) + \epsilon}$$
+
+$$
+A_i = \frac{R_i - \text{mean}(\{R_1, \dots, R_G\})}{\text{std}(\{R_1, \dots, R_G\}) + \epsilon}
+$$
+
 - **Policy Update**: Trajectories that retrieved the right information with fewer searches and accurate citations receive positive advantage $A_i > 0$. Trajectories that failed, hallucinated citations, or spammed redundant queries receive negative advantage $A_i < 0$.
 - **Outcome**: The LLM autonomously discovers optimal query formulations, verifies external evidence, and produces grounded responses without requiring human annotators!
 
@@ -546,18 +766,38 @@ flowchart TD
 
 ##### A. Jaccard Similarity Estimation & Unbiasedness
 For a collection of $K = 128$ hash permutations $\{h_1, \dots, h_K\}$, the MinHash estimator is:
-$$\hat{J}(A, B) = \frac{1}{K} \sum_{k=1}^K \mathbb{I}\left( h_k(A) = h_k(B) \right)$$
+
+$$
+\hat{J}(A, B) = \frac{1}{K} \sum_{k=1}^K \mathbb{I}\left( h_k(A) = h_k(B) \right)
+$$
+
 Since $\mathbb{E}\left[\mathbb{I}(h_k(A) = h_k(B))\right] = J(A, B)$, the estimator is strictly unbiased:
-$$\mathbb{E}[\hat{J}(A, B)] = J(A, B)$$
+
+$$
+\mathbb{E}[\hat{J}(A, B)] = J(A, B)
+$$
+
 The variance of the estimator corresponds to a binomial distribution scaled by $1/K^2$:
-$$\text{Var}[\hat{J}(A, B)] = \frac{J(A, B)(1 - J(A, B))}{K}$$
+
+$$
+\text{Var}[\hat{J}(A, B)] = \frac{J(A, B)(1 - J(A, B))}{K}
+$$
+
 For $K = 128$, the maximum standard deviation (occurring at $J = 0.5$) is:
-$$\sigma_{\max} = \sqrt{\frac{0.5 \times 0.5}{128}} = \sqrt{\frac{0.25}{128}} \approx 0.0442 \quad (\pm 4.42\%)$$
+
+$$
+\sigma_{\max} = \sqrt{\frac{0.5 \times 0.5}{128}} = \sqrt{\frac{0.25}{128}} \approx 0.0442 \quad (\pm 4.42\%)
+$$
+
 This guarantees high precision when distinguishing between dissimilar documents ($J < 0.40$) and near-duplicates ($J \ge 0.80$).
 
 ##### B. LSH Banding Parameter Optimization ($b=32, r=4$)
 Dividing $K = 128$ signatures into $b = 32$ bands with $r = 4$ rows per band provides an S-curve probability function:
-$$P(s) = 1 - (1 - s^4)^{32}$$
+
+$$
+P(s) = 1 - (1 - s^4)^{32}
+$$
+
 - At $s = 0.20$ (dissimilar): $P(0.20) = 1 - (1 - 0.0016)^{32} \approx 0.0499$ (95% true negative rate).
 - At $s = 0.50$ (moderate overlap): $P(0.50) = 1 - (1 - 0.0625)^{32} \approx 0.873$.
 - At $s = 0.80$ (near-duplicate): $P(0.80) = 1 - (1 - 0.4096)^{32} \approx 0.99999995$ ($> 99.9999\%$ detection rate).
@@ -565,9 +805,20 @@ $$P(s) = 1 - (1 - s^4)^{32}$$
 ##### C. 13-Gram Benchmark Contamination Guard Formulation
 Following Dodge et al. (2021), given a held-out benchmark evaluation suite $\mathcal{B} = \{ (q_i, y_i^*) \}_{i=1}^N$:
 1. Compute the multiset of all normalized 13-word shingles across evaluation queries and answers:
-   $$\mathcal{G}_{13}(\mathcal{B}) = \bigcup_{(q, y^*) \in \mathcal{B}} \text{13-grams}(\text{normalize}(q \circ y^*))$$
+
+$$
+\mathcal{G}_{13}(\mathcal{B}) = \bigcup_{(q, y^*) \in \mathcal{B}} \text{13-grams}(\text{normalize}(q \circ y^*))
+$$
+
 2. For each candidate web document $d$:
-   $$\text{Contaminated}(d) = \begin{cases} 1 & \text{if } \exists g \in \text{13-grams}(d) \text{ s.t. } g \in \mathcal{G}_{13}(\mathcal{B}) \\ 0 & \text{otherwise} \end{cases}$$
+
+$$
+\text{Contaminated}(d) = \begin{cases}
+  1 & \text{if } \exists g \in \text{13-grams}(d) \text{ s.t. } g \in \mathcal{G}_{13}(\mathcal{B}) \\
+  0 & \text{otherwise}
+\end{cases}
+$$
+
 Any contaminated document is immediately rejected to prevent false benchmark memorization during SFT and RL post-training.
 
 ### 7.8 Section 7.3: Graph-Based Connected Components Cluster Deduplication & Canonical Election
@@ -580,19 +831,37 @@ When documents stream into an LLM ingestion pipeline, evaluating near-duplicates
 #### 2. Disjoint-Set Union-Find Graph Formulation
 Let $V = \{d_1, d_2, \dots, d_N\}$ be the set of all cleaned documents passing C4 quality filters.
 We construct an undirected graph $G = (V, E)$, where an edge exists if the estimated MinHash Jaccard similarity satisfies:
-$$(u, v) \in E \iff \hat{J}(u, v) \ge \tau, \quad \tau = 0.80$$
+
+$$
+(u, v) \in E \iff \hat{J}(u, v) \ge \tau, \quad \tau = 0.80
+$$
 
 We partition $G$ into $K$ disjoint connected components $\mathcal{C}_1, \mathcal{C}_2, \dots, \mathcal{C}_K$ using an optimized **Disjoint-Set Union (DSU / Union-Find)** data structure with path compression and union by rank:
 - **Path Compression**: Flatten the tree structure whenever `find(x)` is called:
-  $$\text{parent}[x] = \text{find}(\text{parent}[x])$$
+
+$$
+\text{parent}[x] = \text{find}(\text{parent}[x])
+$$
+
 - **Union by Rank**: Always attach the smaller rank tree to the root of the larger rank tree:
-  $$\text{Amortized Complexity}: \mathcal{O}(V + E \cdot \alpha(V)) \approx \mathcal{O}(V + E)$$
+
+$$
+\text{Amortized Complexity}: \mathcal{O}(V + E \cdot \alpha(V)) \approx \mathcal{O}(V + E)
+$$
+
   where $\alpha(\cdot)$ is the inverse Ackermann function ($\alpha(n) \le 4$ for all practical universe sizes).
 
 #### 3. Canonical Document Election
 For every connected component cluster $\mathcal{C}_k$ with $|\mathcal{C}_k| > 1$, we elect exactly one **canonical document** $d^*$ that maximizes the information density quality metric:
-$$d^* = \arg\max_{d \in \mathcal{C}_k} \text{QualityScore}(d)$$
-$$\text{QualityScore}(d) = \ln(\text{length}(d)) \cdot (1 - R_{\text{line}}(d)) \cdot \text{stopword\_density}(d)$$
+
+$$
+d^* = \arg\max_{d \in \mathcal{C}_k} \text{QualityScore}(d)
+$$
+
+$$
+\text{QualityScore}(d) = \ln(\text{length}(d)) \cdot (1 - R_{\text{line}}(d)) \cdot \text{stopword\_density}(d)
+$$
+
 All other duplicate variants $\mathcal{C}_k \setminus \{d^*\}$ are discarded. This ensures zero redundant gradients during post-training while retaining the highest-fidelity version of each document.
 
 ```mermaid
@@ -623,7 +892,11 @@ flowchart TD
 
 #### 1. The Convex Combination Experience Replay Mixture
 To protect the LLM against catastrophic forgetting and model collapse (Shumailov et al., Nature 2024), newly ingested web data is never trained in isolation. Training mini-batches are drawn from a convex combination distribution:
-$$\mathcal{P}_{\text{batch}} \sim \alpha \cdot \mathcal{P}_{\text{anchor}} + (1 - \alpha) \cdot \mathcal{P}_{\text{web}}, \quad \alpha = 0.70$$
+
+$$
+\mathcal{P}_{\text{batch}} \sim \alpha \cdot \mathcal{P}_{\text{anchor}} + (1 - \alpha) \cdot \mathcal{P}_{\text{web}}, \quad \alpha = 0.70
+$$
+
 - $\mathcal{P}_{\text{anchor}}$: Immutable golden baseline corpus (70% ratio), preserving grammar, syntactic structure, and core reasoning.
 - $\mathcal{P}_{\text{web}}$: Ingested, cleaned, and cluster-deduplicated web domain corpus (30% ratio), acquiring fresh external facts.
 
@@ -679,7 +952,11 @@ Zhou et al. fine-tuned a 65B parameter LLaMA model on just **1,000 meticulously 
 Full parameter fine-tuning of deep networks requires modifying all parameters $\Theta \in \mathbb{R}^D$, necessitating storing gradients and optimizer states (e.g. 1st and 2nd Adam moments) for every single weight. This causes memory consumption to scale to $3\times$ to $4\times$ the parameter count and induces catastrophic disruption across foundational representations.
 - **The Intrinsic Dimensionality Hypothesis** (Aghajanyan et al., 2020): Although pre-trained models reside in massive parameter spaces, the objective manifolds of downstream task adaptations exhibit an extremely low intrinsic dimension. The effective rank $r$ of gradient updates $\Delta W$ satisfies $r \ll \min(d_{\text{in}}, d_{\text{out}})$.
 - **Factorization Parameterization**: LoRA freezes the pre-trained weight matrix $W_0 \in \mathbb{R}^{d_{\text{out}} \times d_{\text{in}}}$ and decomposes the update matrix into the product of two low-rank matrices:
-  $$\Delta W = \frac{\alpha}{r} B A, \quad B \in \mathbb{R}^{d_{\text{out}} \times r}, \; A \in \mathbb{R}^{r \times d_{\text{in}}}$$
+
+$$
+\Delta W = \frac{\alpha}{r} B A, \quad B \in \mathbb{R}^{d_{\text{out}} \times r}, \; A \in \mathbb{R}^{r \times d_{\text{in}}}
+$$
+
   where $r \ll \min(d_{\text{in}}, d_{\text{out}})$ and $\alpha$ is a fixed scaling hyperparameter.
 - **Initialization Invariance**: $A$ is drawn from a Gaussian distribution $A_{ij} \sim \mathcal{N}\left(0, \frac{1}{r}\right)$, while $B$ is initialized strictly to zero ($B = \mathbf{0}$). Consequently, $\Delta W \big|_{t=0} = \mathbf{0}$, ensuring that at the start of fine-tuning, the model's exact baseline behavior is identically preserved without activation shock.
 
@@ -687,10 +964,18 @@ Full parameter fine-tuning of deep networks requires modifying all parameters $\
 
 #### 3. DoRA: Weight-Decomposed Low-Rank Adaptation (Liu et al., ICML 2024)
 Liu et al. analyzed the structural difference between full fine-tuning (FT) and standard LoRA by decomposing weight matrices into magnitude $m \in \mathbb{R}^{1 \times d_{\text{in}}}$ and directional matrix $V \in \mathbb{R}^{d_{\text{out}} \times d_{\text{in}}}$:
-$$W = m \odot \frac{V}{\|V\|_F}$$
+
+$$
+W = m \odot \frac{V}{\|V\|_F}
+$$
+
 - **LoRA's Inherent Coupling**: In standard LoRA, magnitude and direction updates exhibit a proportional, monotonic correlation because $\Delta W$ is directly added to $W_0$. In contrast, full fine-tuning demonstrates subtle, orthogonal adjustments where directional changes occur with minimal magnitude shifts.
 - **DoRA Decomposition**: DoRA factorizes the directional component via LoRA while training the magnitude vector separately:
-  $$W = m \odot \frac{W_0 + \frac{\alpha}{r} B A}{\left\|W_0 + \frac{\alpha}{r} B A\right\|_F}$$
+
+$$
+W = m \odot \frac{W_0 + \frac{\alpha}{r} B A}{\left\|W_0 + \frac{\alpha}{r} B A\right\|_F}
+$$
+
   This bridges the capacity gap between LoRA and full fine-tuning, achieving full fine-tuning accuracy while retaining low-rank parameter efficiency.
 
 ---
@@ -698,7 +983,11 @@ $$W = m \odot \frac{V}{\|V\|_F}$$
 #### 4. QLoRA: Efficient Fine-Tuning of Quantized LLMs (Dettmers et al., NeurIPS 2023)
 Dettmers et al. proved that pre-trained weights $W_0$ can be compressed into 4-bit NormalFloat (NF4) representations without degrading LoRA adaptation capability:
 - **NF4 Quantization**: Information-theoretically optimal quantile binning for normally distributed neural network weights:
-  $$q_i = \frac{1}{2}\left(Q_X\left(\frac{i}{2^k}\right) + Q_X\left(\frac{i+1}{2^k}\right)\right)$$
+
+$$
+q_i = \frac{1}{2}\left(Q_X\left(\frac{i}{2^k}\right) + Q_X\left(\frac{i+1}{2^k}\right)\right)
+$$
+
 - **Double Quantization (DQ)**: Quantizing the quantization constants themselves, saving $\approx 0.37$ bits per parameter.
 - **Paged Optimizers**: Managing memory spikes during gradient backpropagation via page-locked GPU/MPS virtual memory.
 
@@ -744,10 +1033,17 @@ A survey of top production repositories reveals essential architectural patterns
 #### 1. LoRA Forward Pass, Scaling, and Initialization Invariance
 
 Let $x \in \mathbb{R}^{B \times T \times d_{\text{in}}}$ denote the input activation tensor to a linear layer with pre-trained weight $W_0 \in \mathbb{R}^{d_{\text{out}} \times d_{\text{in}}}$. In standard linear projection:
-$$h_0 = x W_0^T \in \mathbb{R}^{B \times T \times d_{\text{out}}}$$
+
+$$
+h_0 = x W_0^T \in \mathbb{R}^{B \times T \times d_{\text{out}}}
+$$
 
 In a LoRA-adapted linear layer with rank $r \ll \min(d_{\text{in}}, d_{\text{out}})$ and scaling factor $\alpha$:
-$$h = h_0 + \Delta h = x W_0^T + \frac{\alpha}{r} \left( x A^T \right) B^T$$
+
+$$
+h = h_0 + \Delta h = x W_0^T + \frac{\alpha}{r} \left( x A^T \right) B^T
+$$
+
 where:
 - $W_0 \in \mathbb{R}^{d_{\text{out}} \times d_{\text{in}}}$ is frozen ($\text{requires\_grad} = \text{False}$).
 - $A \in \mathbb{R}^{r \times d_{\text{in}}}$ is initialized from a Gaussian distribution: $A_{ij} \sim \mathcal{N}\left(0, \sigma^2 = \frac{1}{r}\right)$ (or Kaiming uniform).
@@ -756,7 +1052,11 @@ where:
 
 ##### Theorem 7.1 (Zero-Shock Initialization):
 At initialization step $t=0$:
-$$B \Big|_{t=0} = \mathbf{0} \implies \Delta h \Big|_{t=0} = \frac{\alpha}{r} (x A^T) \mathbf{0}^T = \mathbf{0} \implies h \Big|_{t=0} = h_0$$
+
+$$
+B \Big|_{t=0} = \mathbf{0} \implies \Delta h \Big|_{t=0} = \frac{\alpha}{r} (x A^T) \mathbf{0}^T = \mathbf{0} \implies h \Big|_{t=0} = h_0
+$$
+
 *Significance*: The adapter introduces zero perturbation to the pre-trained forward pass at initialization. No warm-up phase is required to overcome random weight noise.
 
 ---
@@ -772,15 +1072,28 @@ For a single linear matrix $W_0 \in \mathbb{R}^{d_{\text{out}} \times d_{\text{i
 - LoRA parameters: $N_{\text{LoRA}} = r \cdot d_{\text{in}} + d_{\text{out}} \cdot r = r(d_{\text{in}} + d_{\text{out}})$
 
 ##### Parameter Reduction Ratio $\rho$:
-$$\rho = \frac{N_{\text{LoRA}}}{N_{\text{full}}} = \frac{r(d_{\text{in}} + d_{\text{out}})}{d_{\text{in}} \cdot d_{\text{out}}} = r \left( \frac{1}{d_{\text{out}}} + \frac{1}{d_{\text{in}}} \right)$$
+
+$$
+\rho = \frac{N_{\text{LoRA}}}{N_{\text{full}}} = \frac{r(d_{\text{in}} + d_{\text{out}})}{d_{\text{in}} \cdot d_{\text{out}}} = r \left( \frac{1}{d_{\text{out}}} + \frac{1}{d_{\text{in}}} \right)
+$$
 
 For a square matrix ($d_{\text{in}} = d_{\text{out}} = d$):
-$$\rho = \frac{2r}{d}$$
+
+$$
+\rho = \frac{2r}{d}
+$$
 
 *Numerical Example*: For MiniGPT with $d = 256$ and rank $r = 8$:
-$$\rho = \frac{2 \times 8}{256} = \frac{16}{256} = 0.0625 \implies \mathbf{93.75\% \text{ reduction in trainable parameters}}$$
+
+$$
+\rho = \frac{2 \times 8}{256} = \frac{16}{256} = 0.0625 \implies \mathbf{93.75\% \text{ reduction in trainable parameters}}
+$$
+
 For a standard 7B model ($d = 4096, r = 8$):
-$$\rho = \frac{2 \times 8}{4096} = \frac{16}{4096} = 0.0039 \implies \mathbf{99.61\% \text{ reduction in trainable parameters}}$$
+
+$$
+\rho = \frac{2 \times 8}{4096} = \frac{16}{4096} = 0.0039 \implies \mathbf{99.61\% \text{ reduction in trainable parameters}}
+$$
 
 ##### Optimizer Memory Savings:
 In AdamW, each trainable parameter requires 8 bytes of optimizer state (4 bytes for the first moment $m_t$, 4 bytes for the second moment $v_t$) plus 4 bytes for the master fp32 gradient.
@@ -796,34 +1109,60 @@ Let $\mathcal{L}$ be the scalar cross-entropy loss, and let $\delta = \frac{\par
 Let $\tilde{x} = x A^T \in \mathbb{R}^{B \times T \times r}$.
 
 By the multivariable chain rule:
-$$\frac{\partial \mathcal{L}}{\partial B} = \sum_{b=1}^B \sum_{t=1}^T \frac{\alpha}{r} \left( \delta_{b, t, :}^T \otimes \tilde{x}_{b, t, :} \right) = \frac{\alpha}{r} \delta_{\text{flat}}^T \tilde{x}_{\text{flat}} \in \mathbb{R}^{d_{\text{out}} \times r}$$
-$$\frac{\partial \mathcal{L}}{\partial A} = \frac{\alpha}{r} \left( \delta_{\text{flat}} B \right)^T x_{\text{flat}} \in \mathbb{R}^{r \times d_{\text{in}}}$$
+
+$$
+\frac{\partial \mathcal{L}}{\partial B} = \sum_{b=1}^B \sum_{t=1}^T \frac{\alpha}{r} \left( \delta_{b, t, :}^T \otimes \tilde{x}_{b, t, :} \right) = \frac{\alpha}{r} \delta_{\text{flat}}^T \tilde{x}_{\text{flat}} \in \mathbb{R}^{d_{\text{out}} \times r}
+$$
+
+$$
+\frac{\partial \mathcal{L}}{\partial A} = \frac{\alpha}{r} \left( \delta_{\text{flat}} B \right)^T x_{\text{flat}} \in \mathbb{R}^{r \times d_{\text{in}}}
+$$
 
 The gradient propagated back to the layer inputs $x$ is:
-$$\nabla_x \mathcal{L} = \delta_{\text{flat}} W_0 + \frac{\alpha}{r} \left( \delta_{\text{flat}} B \right) A \in \mathbb{R}^{(B \cdot T) \times d_{\text{in}}}$$
+
+$$
+\nabla_x \mathcal{L} = \delta_{\text{flat}} W_0 + \frac{\alpha}{r} \left( \delta_{\text{flat}} B \right) A \in \mathbb{R}^{(B \cdot T) \times d_{\text{in}}}
+$$
 
 Since $W_0$ is frozen:
-$$\nabla_{W_0} \mathcal{L} = \mathbf{0}$$
+
+$$
+\nabla_{W_0} \mathcal{L} = \mathbf{0}
+$$
 
 ---
 
 #### 4. Zero-Overhead Inference Weight Merging & Unmerging
 
 Due to the distributive property of matrix multiplication:
-$$h = x W_0^T + \frac{\alpha}{r} \left( x A^T \right) B^T = x \left( W_0 + \frac{\alpha}{r} B A \right)^T$$
+
+$$
+h = x W_0^T + \frac{\alpha}{r} \left( x A^T \right) B^T = x \left( W_0 + \frac{\alpha}{r} B A \right)^T
+$$
 
 We define the merged effective weight matrix $W_{\text{merged}} \in \mathbb{R}^{d_{\text{out}} \times d_{\text{in}}}$:
-$$W_{\text{merged}} = W_0 + \frac{\alpha}{r} B A$$
+
+$$
+W_{\text{merged}} = W_0 + \frac{\alpha}{r} B A
+$$
 
 ##### Merge Invariance:
-$$x W_{\text{merged}}^T \equiv h$$
+
+$$
+x W_{\text{merged}}^T \equiv h
+$$
+
 *Significance*: During deployment, the adapter weights can be permanently folded into $W_0$. The model runs as a standard vanilla transformer with:
 1. Zero added latency ($\Delta t_{\text{inference}} = 0$).
 2. Zero additional memory lookups.
 3. Zero runtime architectural dependencies on LoRA modules.
 
 ##### Reversibility (Unmerging):
-$$W_0 = W_{\text{merged}} - \frac{\alpha}{r} B A$$
+
+$$
+W_0 = W_{\text{merged}} - \frac{\alpha}{r} B A
+$$
+
 Adapters can be dynamically applied, merged, evaluated, and unmerged in-memory during continuous learning cycles.
 
 ---
@@ -833,21 +1172,46 @@ Adapters can be dynamically applied, merged, evaluated, and unmerged in-memory d
 Consider a tokenized conversational sequence $X = (x_1, x_2, \dots, x_N)$ of length $N$, comprising a prompt prefix $X_{\text{prompt}} = (x_1, \dots, x_M)$ and an assistant completion $X_{\text{completion}} = (x_{M+1}, \dots, x_N)$.
 
 ##### Naive Causal Loss (Unmasked):
-$$\mathcal{L}_{\text{naive}}(\theta) = -\frac{1}{N-1} \sum_{t=1}^{N-1} \ln P_\theta(x_{t+1} \mid x_1, \dots, x_t)$$
+
+$$
+\mathcal{L}_{\text{naive}}(\theta) = -\frac{1}{N-1} \sum_{t=1}^{N-1} \ln P_\theta(x_{t+1} \mid x_1, \dots, x_t)
+$$
 
 ##### Completion-Only Masked Formulation:
 We define a binary token importance mask $M_t \in \{0, 1\}$:
-$$M_t = \begin{cases} 1 & \text{if } t \ge M \text{ (token is generated by assistant)} \\ 0 & \text{if } t < M \text{ (token belongs to system or user prompt)} \end{cases}$$
+
+$$
+M_t = \begin{cases}
+  1 & \text{if } t \ge M \text{ (token is generated by assistant)} \\
+  0 & \text{if } t < M \text{ (token belongs to system or user prompt)}
+\end{cases}
+$$
 
 The aligned loss is:
-$$\mathcal{L}_{\text{completion}}(\theta) = -\frac{1}{\sum_{t=1}^{N-1} M_t} \sum_{t=1}^{N-1} M_t \sum_{v=1}^V \mathbb{I}(x_{t+1} = v) \ln \frac{\exp\left(z_{t, v}\right)}{\sum_{j=1}^V \exp\left(z_{t, j}\right)}$$
+
+$$
+\mathcal{L}_{\text{completion}}(\theta) = -\frac{1}{\sum_{t=1}^{N-1} M_t} \sum_{t=1}^{N-1} M_t \sum_{v=1}^V \mathbb{I}(x_{t+1} = v) \ln \frac{\exp\left(z_{t, v}\right)}{\sum_{j=1}^V \exp\left(z_{t, j}\right)}
+$$
 
 In PyTorch, masked tokens are mapped to target index $-100$:
-$$Y_t = \begin{cases} x_{t+1} & \text{if } M_t = 1 \\ -100 & \text{if } M_t = 0 \end{cases}$$
-$$\mathcal{L}_{\text{completion}} = \text{CrossEntropyLoss}(z, Y, \text{ignore\_index}=-100)$$
+
+$$
+Y_t = \begin{cases}
+  x_{t+1} & \text{if } M_t = 1 \\
+  -100 & \text{if } M_t = 0
+\end{cases}
+$$
+
+$$
+\mathcal{L}_{\text{completion}} = \text{CrossEntropyLoss}(z, Y, \text{ignore\_index}=-100)
+$$
 
 ##### Theorem 7.2 (Prompt Invariance under Completion Masking):
-$$\forall t < M, \quad \frac{\partial \mathcal{L}_{\text{completion}}}{\partial z_t} = \mathbf{0}$$
+
+$$
+\forall t < M, \quad \frac{\partial \mathcal{L}_{\text{completion}}}{\partial z_t} = \mathbf{0}
+$$
+
 *Proof*: Since $Y_t = -100$ for $t < M$, $\text{CrossEntropyLoss}$ ignores index $t$, setting $\frac{\partial \mathcal{L}}{\partial z_t} \equiv \mathbf{0}$. Therefore, the model is never penalized for the arbitrary phrasing, grammar, or vocabulary choices in the user's prompt. $100\%$ of the gradient budget is concentrated on synthesizing high-quality responses.
 
 ---
@@ -855,11 +1219,18 @@ $$\forall t < M, \quad \frac{\partial \mathcal{L}_{\text{completion}}}{\partial 
 #### 6. Experience Replay Entropy Preservation Bound
 
 Let mini-batches during SFT be sampled from the convex mixture:
-$$\mathcal{P}_{\text{replay}} = \lambda \mathcal{P}_{\text{anchor}} + (1 - \lambda) \mathcal{P}_{\text{web}}, \quad \lambda = 0.70$$
+
+$$
+\mathcal{P}_{\text{replay}} = \lambda \mathcal{P}_{\text{anchor}} + (1 - \lambda) \mathcal{P}_{\text{web}}, \quad \lambda = 0.70
+$$
+
 where $\mathcal{P}_{\text{anchor}}$ is the golden anchor baseline distribution and $\mathcal{P}_{\text{web}}$ is the newly curated web domain distribution.
 
 By the concavity of Shannon entropy $H(P) = -\sum_x P(x) \ln P(x)$, the entropy of this *data-source mixture* satisfies:
-$$H(\mathcal{P}_{\text{replay}}) \ge \lambda H(\mathcal{P}_{\text{anchor}}) + (1 - \lambda) H(\mathcal{P}_{\text{web}})$$
+
+$$
+H(\mathcal{P}_{\text{replay}}) \ge \lambda H(\mathcal{P}_{\text{anchor}}) + (1 - \lambda) H(\mathcal{P}_{\text{web}})
+$$
 
 If $H(\mathcal{P}_{\text{anchor}}) \ge H_0$ and entropy is measured over a shared sample space, this yields $H(\mathcal{P}_{\text{replay}}) \ge 0.70 H_0$. This is a statement about the input data distribution only; it is not a lower bound on the trained model's output entropy and does not prove protection from forgetting or model collapse.
 
@@ -1043,7 +1414,11 @@ flowchart LR
        1. $\text{PPL}_{\text{domain}}$: Measures acquisition of new web domain knowledge.
        2. $\text{PPL}_{\text{anchor}}$: Measures retention of foundational general capabilities (Shakespeare / golden dialogue).
      - Computes relative anchor perplexity drift:
-       $$\Delta \text{PPL}_{\text{anchor}} = \frac{\text{PPL}_{\text{adapted}}^{\text{anchor}} - \text{PPL}_{\text{base}}^{\text{anchor}}}{\text{PPL}_{\text{base}}^{\text{anchor}}}$$
+
+$$
+\Delta \text{PPL}_{\text{anchor}} = \frac{\text{PPL}_{\text{adapted}}^{\text{anchor}} - \text{PPL}_{\text{base}}^{\text{anchor}}}{\text{PPL}_{\text{base}}^{\text{anchor}}}
+$$
+
      - `evaluate_regression_gate()`: Emits `RegressionResult`:
        - `PASS`: If $\text{PPL}_{\text{domain}} < \text{PPL}_{\text{base}}^{\text{domain}}$ AND $\Delta \text{PPL}_{\text{anchor}} \le 5\%$.
        - `FAIL_FORGETTING`: If $\Delta \text{PPL}_{\text{anchor}} > 5\%$. Triggers automatic recommendation to increase replay buffer anchor ratio $\lambda$ (e.g. from $70\%$ to $85\%$) or lower LoRA rank/learning rate.
@@ -1072,7 +1447,10 @@ A dedicated master test file `tests/test_m3_sft.py` will be registered with `tes
 #### 1. Academic & Engineering Foundations for Instruction Curation
 
 Supervised Fine-Tuning (SFT) differs fundamentally from raw pre-training in the geometry of the target distribution. While pre-training optimizes next-token predictability over unstructured text sequences $\mathcal{L}(\theta) = -\mathbb{E}_{x \sim \mathcal{D}} [\sum_t \ln P_\theta(x_t \mid x_{<t})]$, instruction tuning optimizes conditional probability distributions over directed task executions:
-$$\mathcal{L}_{\text{SFT}}(\theta) = -\mathbb{E}_{(x_{\text{prompt}}, x_{\text{completion}}) \sim \mathcal{D}_{\text{instruct}}} \left[ \sum_{t=1}^{|x_{\text{completion}}|} \ln P_\theta(x_{\text{completion}, t} \mid x_{\text{prompt}}, x_{\text{completion}, <t}) \right]$$
+
+$$
+\mathcal{L}_{\text{SFT}}(\theta) = -\mathbb{E}_{(x_{\text{prompt}}, x_{\text{completion}}) \sim \mathcal{D}_{\text{instruct}}} \left[ \sum_{t=1}^{|x_{\text{completion}}|} \ln P_\theta(x_{\text{completion}, t} \mid x_{\text{prompt}}, x_{\text{completion}, <t}) \right]
+$$
 
 ##### Why Raw Language Modeling Loss Breaks Instruction Following:
 1. **Prompt Memorization & Gradient Cannibalization**: In an unmasked autoregressive training run, if the prompt has length $M$ and the completion has length $K$, $\frac{M}{M+K}$ of the gradient updates are spent optimizing transitions between arbitrary prompt words chosen by the prompter (e.g. system preamble, formatting punctuation, question style). For long system prompts, over $70\%$ of the gradient capacity is wasted memorizing the input rather than refining the model's reasoning or answer generation.
@@ -1106,17 +1484,34 @@ Self-attention computes dynamic correlation weights across all sequence position
 #### 3. Fisher Information & Gradient Concentration Theorem
 
 Let $\theta$ represent the model parameters. The Fisher Information Matrix $\mathcal{I}(\theta)$ measures the amount of information that an observable token sequence carries about parameters $\theta$:
-$$\mathcal{I}(\theta) = \mathbb{E}\left[ \left(\nabla_\theta \ln P_\theta(X)\right) \left(\nabla_\theta \ln P_\theta(X)\right)^T \right]$$
+
+$$
+\mathcal{I}(\theta) = \mathbb{E}\left[ \left(\nabla_\theta \ln P_\theta(X)\right) \left(\nabla_\theta \ln P_\theta(X)\right)^T \right]
+$$
 
 ##### Theorem 7.3 (Fisher Information Concentration under Completion Masking):
 Under naive causal loss:
-$$\mathcal{I}_{\text{naive}}(\theta) = \mathcal{I}_{\text{prompt}}(\theta) + \mathcal{I}_{\text{completion}}(\theta)$$
+
+$$
+\mathcal{I}_{\text{naive}}(\theta) = \mathcal{I}_{\text{prompt}}(\theta) + \mathcal{I}_{\text{completion}}(\theta)
+$$
+
 where $\mathcal{I}_{\text{prompt}}(\theta) > 0$.
 
 Under completion-only masked loss with target mask $M_t = \mathbb{I}(t \in \text{assistant\_span})$:
-$$\nabla_\theta \mathcal{L}_{\text{completion}}(\theta) = -\sum_{t \in \text{assistant\_span}} \nabla_\theta \ln P_\theta(x_t \mid x_{<t})$$
-$$\mathcal{I}_{\text{masked}}(\theta) = \mathcal{I}_{\text{completion}}(\theta)$$
-$$\frac{\partial \mathcal{I}_{\text{masked}}(\theta)}{\partial \theta_{\text{prompt}}} = \mathbf{0}$$
+
+$$
+\nabla_\theta \mathcal{L}_{\text{completion}}(\theta) = -\sum_{t \in \text{assistant\_span}} \nabla_\theta \ln P_\theta(x_t \mid x_{<t})
+$$
+
+$$
+\mathcal{I}_{\text{masked}}(\theta) = \mathcal{I}_{\text{completion}}(\theta)
+$$
+
+$$
+\frac{\partial \mathcal{I}_{\text{masked}}(\theta)}{\partial \theta_{\text{prompt}}} = \mathbf{0}
+$$
+
 *Significance*: The empirical Hessian and Fisher Information are $100\%$ concentrated on the parameter manifold governing generation fidelity, eliminating parameter drift induced by prompt phrasing variance.
 
 ---
@@ -1266,24 +1661,56 @@ Low-Rank Adaptation (LoRA) has emerged as the industry standard for foundation m
 #### Theorem 7.4 (Initial Identity Preservation):
 Let $W_0 \in \mathbb{R}^{d_{\text{out}} \times d_{\text{in}}}$ be the frozen base weight. Let down-projection $A \in \mathbb{R}^{r \times d_{\text{in}}}$ be initialized from Gaussian distribution $A_{ij} \sim \mathcal{N}\left(0, \frac{1}{r}\right)$ and up-projection $B \in \mathbb{R}^{d_{\text{out}} \times r}$ be initialized to zeros $B_{ij} = 0$.
 The low-rank update matrix is:
-$$\Delta W = \frac{\alpha}{r} B A \in \mathbb{R}^{d_{\text{out}} \times d_{\text{in}}}$$
+
+$$
+\Delta W = \frac{\alpha}{r} B A \in \mathbb{R}^{d_{\text{out}} \times d_{\text{in}}}
+$$
+
 At step $t = 0$:
-$$B = \mathbf{0} \implies \Delta W \Big|_{t=0} = \frac{\alpha}{r} \mathbf{0} \cdot A = \mathbf{0}$$
+
+$$
+B = \mathbf{0} \implies \Delta W \Big|_{t=0} = \frac{\alpha}{r} \mathbf{0} \cdot A = \mathbf{0}
+$$
+
 For any input activation $x \in \mathbb{R}^{B \times T \times d_{\text{in}}}$:
-$$h(x) \Big|_{t=0} = x W_0^T + \frac{\alpha}{r} (x A^T) B^T = x W_0^T + \mathbf{0} \equiv h_{\text{base}}(x)$$
+
+$$
+h(x) \Big|_{t=0} = x W_0^T + \frac{\alpha}{r} (x A^T) B^T = x W_0^T + \mathbf{0} \equiv h_{\text{base}}(x)
+$$
+
 *Significance*: No random noise enters the model forward pass at initialization. The pre-trained model outputs remain bit-for-bit identical before fine-tuning begins.
 
 #### Theorem 7.5 (Exact Reversible Weight Fusion):
 Due to the linearity of matrix multiplication:
-$$h(x) = x W_0^T + \frac{\alpha}{r} x A^T B^T = x \left( W_0 + \frac{\alpha}{r} B A \right)^T$$
+
+$$
+h(x) = x W_0^T + \frac{\alpha}{r} x A^T B^T = x \left( W_0 + \frac{\alpha}{r} B A \right)^T
+$$
+
 We define the fused weight matrix:
-$$W_{\text{merged}} = W_0 + \frac{\alpha}{r} B A \in \mathbb{R}^{d_{\text{out}} \times d_{\text{in}}}$$
+
+$$
+W_{\text{merged}} = W_0 + \frac{\alpha}{r} B A \in \mathbb{R}^{d_{\text{out}} \times d_{\text{in}}}
+$$
+
 ##### Merging Step:
-$$W_0 \leftarrow W_{\text{merged}}, \quad \text{merged} = \text{True}$$
+
+$$
+W_0 \leftarrow W_{\text{merged}}, \quad \text{merged} = \text{True}
+$$
+
 When `merged = True`, the forward pass executes standard dense GEMM:
-$$h(x) = x W_{\text{merged}}^T$$
+
+$$
+h(x) = x W_{\text{merged}}^T
+$$
+
 ##### Unmerging Step (Reversibility):
-$$W_0 \leftarrow W_{\text{merged}} - \frac{\alpha}{r} B A, \quad \text{merged} = \text{False}$$
+
+$$
+W_0 \leftarrow W_{\text{merged}} - \frac{\alpha}{r} B A, \quad \text{merged} = \text{False}
+$$
+
 *Significance*: Deployed models incur zero runtime latency overhead. Adapters can be dynamically mounted, tested, and reverted in memory during continual learning sweeps.
 
 ---
@@ -1498,18 +1925,33 @@ In a mini-batch of $B$ sequences, each of length $T$, let $y_{b, t}$ denote targ
 Let $\mathcal{A} = \{(b, t) \mid y_{b, t} \ne -100\}$ denote the set of active assistant completion tokens, with cardinality $N_{\text{active}} = |\mathcal{A}|$.
 
 The loss is normalized across all active tokens in the mini-batch:
-$$\mathcal{L}_{\text{completion}}(\theta) = -\frac{1}{N_{\text{active}}} \sum_{(b, t) \in \mathcal{A}} \ln P_\theta(y_{b, t} \mid x_{b, \le t}) = -\frac{1}{N_{\text{active}}} \sum_{(b, t) \in \mathcal{A}} \left( z_{b, t, y_{b, t}} - \ln \sum_{v=1}^V \exp(z_{b, t, v}) \right)$$
+
+$$
+\mathcal{L}_{\text{completion}}(\theta) = -\frac{1}{N_{\text{active}}} \sum_{(b, t) \in \mathcal{A}} \ln P_\theta(y_{b, t} \mid x_{b, \le t}) = -\frac{1}{N_{\text{active}}} \sum_{(b, t) \in \mathcal{A}} \left( z_{b, t, y_{b, t}} - \ln \sum_{v=1}^V \exp(z_{b, t, v}) \right)
+$$
+
 *Mathematical Invariance*: By normalizing by the total active tokens across the batch ($N_{\text{active}}$) rather than the batch size ($B$), individual examples contribute to the gradient proportionally to their completion information content, preventing short one-word responses from dominating long reasoning chains.
 
 #### Theorem 7.7 (Cosine Annealing with Linear Warmup):
 Let $t \in [0, T_{\text{max}}]$ denote the training step, $T_{\text{warmup}}$ the warmup steps, $\eta_{\text{max}}$ the peak learning rate, and $\eta_{\text{min}}$ the floor learning rate ($\eta_{\text{min}} = 0.1 \cdot \eta_{\text{max}}$).
-$$\eta(t) = \begin{cases} \eta_{\text{max}} \cdot \frac{t}{T_{\text{warmup}}} & \text{if } t < T_{\text{warmup}} \\ \eta_{\text{min}} + \frac{1}{2}(\eta_{\text{max}} - \eta_{\text{min}})\left(1 + \cos\left(\frac{t - T_{\text{warmup}}}{T_{\text{max}} - T_{\text{warmup}}} \pi\right)\right) & \text{if } t \ge T_{\text{warmup}} \end{cases}$$
+
+$$
+\eta(t) = \begin{cases}
+  \eta_{\text{max}} \cdot \frac{t}{T_{\text{warmup}}} & \text{if } t < T_{\text{warmup}} \\
+  \eta_{\text{min}} + \frac{1}{2}(\eta_{\text{max}} - \eta_{\text{min}})\left(1 + \cos\left(\frac{t - T_{\text{warmup}}}{T_{\text{max}} - T_{\text{warmup}}} \pi\right)\right) & \text{if } t \ge T_{\text{warmup}}
+\end{cases}
+$$
+
 - Smooth derivative at peak: $\frac{d\eta}{dt} \Big|_{t = T_{\text{warmup}}^+} = 0$.
 - Monotonic asymptotic decay into minimum curvature, enabling parameters to settle into flat, generalizable minima on the loss surface.
 
 #### Theorem 7.8 (Completion Validation Perplexity):
 The validation completion perplexity is given by the exponential of the average validation loss:
-$$\text{PPL}_{\text{completion}} = \exp\left(\mathcal{L}_{\text{val}}\right) = \exp\left(-\frac{1}{N_{\text{val}}} \sum_{i=1}^{N_{\text{val}}} \ln P(y_i \mid x_i)\right)$$
+
+$$
+\text{PPL}_{\text{completion}} = \exp\left(\mathcal{L}_{\text{val}}\right) = \exp\left(-\frac{1}{N_{\text{val}}} \sum_{i=1}^{N_{\text{val}}} \ln P(y_i \mid x_i)\right)
+$$
+
 - If the model assigns uniform probability across vocabulary $V$, $\text{PPL} = V$.
 - As the model masters instruction formatting and factual responses, $\text{PPL} \to 1.0$.
 
@@ -1681,29 +2123,63 @@ Let $\mathcal{M}_{\text{base}}$ denote the frozen pre-trained model and $\mathca
 Let $\mathcal{D}_{\text{anchor}}^{\text{eval}}$ denote the golden conversational anchor evaluation benchmark, and $\mathcal{D}_{\text{domain}}^{\text{eval}}$ denote the domain-specific evaluation benchmark.
 
 #### 1. Completion Perplexity Metrics:
-$$\text{PPL}_{\text{base}}^{\text{anchor}} = \exp\left(\mathcal{L}_{\text{completion}}(\mathcal{M}_{\text{base}}, \mathcal{D}_{\text{anchor}}^{\text{eval}})\right)$$
-$$\text{PPL}_{\text{adapted}}^{\text{anchor}} = \exp\left(\mathcal{L}_{\text{completion}}(\mathcal{M}_{\text{adapted}}, \mathcal{D}_{\text{anchor}}^{\text{eval}})\right)$$
-$$\text{PPL}_{\text{base}}^{\text{domain}} = \exp\left(\mathcal{L}_{\text{completion}}(\mathcal{M}_{\text{base}}, \mathcal{D}_{\text{domain}}^{\text{eval}})\right)$$
-$$\text{PPL}_{\text{adapted}}^{\text{domain}} = \exp\left(\mathcal{L}_{\text{completion}}(\mathcal{M}_{\text{adapted}}, \mathcal{D}_{\text{domain}}^{\text{eval}})\right)$$
+
+$$
+\text{PPL}_{\text{base}}^{\text{anchor}} = \exp\left(\mathcal{L}_{\text{completion}}(\mathcal{M}_{\text{base}}, \mathcal{D}_{\text{anchor}}^{\text{eval}})\right)
+$$
+
+$$
+\text{PPL}_{\text{adapted}}^{\text{anchor}} = \exp\left(\mathcal{L}_{\text{completion}}(\mathcal{M}_{\text{adapted}}, \mathcal{D}_{\text{anchor}}^{\text{eval}})\right)
+$$
+
+$$
+\text{PPL}_{\text{base}}^{\text{domain}} = \exp\left(\mathcal{L}_{\text{completion}}(\mathcal{M}_{\text{base}}, \mathcal{D}_{\text{domain}}^{\text{eval}})\right)
+$$
+
+$$
+\text{PPL}_{\text{adapted}}^{\text{domain}} = \exp\left(\mathcal{L}_{\text{completion}}(\mathcal{M}_{\text{adapted}}, \mathcal{D}_{\text{domain}}^{\text{eval}})\right)
+$$
 
 #### 2. Relative Anchor Perplexity Drift:
-$$\Delta \text{PPL}_{\text{anchor}} = \frac{\text{PPL}_{\text{adapted}}^{\text{anchor}} - \text{PPL}_{\text{base}}^{\text{anchor}}}{\text{PPL}_{\text{base}}^{\text{anchor}}}$$
+
+$$
+\Delta \text{PPL}_{\text{anchor}} = \frac{\text{PPL}_{\text{adapted}}^{\text{anchor}} - \text{PPL}_{\text{base}}^{\text{anchor}}}{\text{PPL}_{\text{base}}^{\text{anchor}}}
+$$
+
 - A value of $\Delta \text{PPL}_{\text{anchor}} \le 0$ indicates zero degradation (or positive transfer).
 - A value of $\Delta \text{PPL}_{\text{anchor}} > \tau_{\text{forget}}$ ($5\%$) indicates catastrophic forgetting.
 
 #### 3. Relative Domain Knowledge Gain:
-$$\Delta \text{PPL}_{\text{domain}} = \frac{\text{PPL}_{\text{base}}^{\text{domain}} - \text{PPL}_{\text{adapted}}^{\text{domain}}}{\text{PPL}_{\text{base}}^{\text{domain}}}$$
+
+$$
+\Delta \text{PPL}_{\text{domain}} = \frac{\text{PPL}_{\text{base}}^{\text{domain}} - \text{PPL}_{\text{adapted}}^{\text{domain}}}{\text{PPL}_{\text{base}}^{\text{domain}}}
+$$
+
 - A value of $\Delta \text{PPL}_{\text{domain}} > 0$ indicates successful domain knowledge assimilation.
 - A value of $\Delta \text{PPL}_{\text{domain}} \le 0$ indicates failure to learn the new domain.
 
 #### 4. Discrete Qualification Gate Function:
-$$\text{GateDecision}(\mathcal{M}_{\text{adapted}}) = \begin{cases} \mathbf{PASS} & \text{if } \Delta \text{PPL}_{\text{domain}} > 0 \;\land\; \Delta \text{PPL}_{\text{anchor}} \le \tau_{\text{forget}} \\ \mathbf{FAIL\_FORGETTING} & \text{if } \Delta \text{PPL}_{\text{anchor}} > \tau_{\text{forget}} \\ \mathbf{FAIL\_NO\_LEARNING} & \text{if } \Delta \text{PPL}_{\text{domain}} \le 0 \end{cases}$$
+
+$$
+\text{GateDecision}(\mathcal{M}_{\text{adapted}}) = \begin{cases}
+  \mathbf{PASS} & \text{if } \Delta \text{PPL}_{\text{domain}} > 0 \;\land\; \Delta \text{PPL}_{\text{anchor}} \le \tau_{\text{forget}} \\
+  \mathbf{FAIL\_FORGETTING} & \text{if } \Delta \text{PPL}_{\text{anchor}} > \tau_{\text{forget}} \\
+  \mathbf{FAIL\_NO\_LEARNING} & \text{if } \Delta \text{PPL}_{\text{domain}} \le 0
+\end{cases}
+$$
 
 #### Theorem 7.9 (Rollback Stability & Zero Degradation Guarantee):
 If $\text{GateDecision} \neq \mathbf{PASS}$:
 The orchestrator immediately executes `unmerge_lora_weights(model)` or discards the candidate adapter weights:
-$$W \leftarrow W_0$$
-$$\text{PPL}_{\text{deployed}}^{\text{anchor}} \equiv \text{PPL}_{\text{base}}^{\text{anchor}}$$
+
+$$
+W \leftarrow W_0
+$$
+
+$$
+\text{PPL}_{\text{deployed}}^{\text{anchor}} \equiv \text{PPL}_{\text{base}}^{\text{anchor}}
+$$
+
 *Proof*: By Theorem 7.5, unmerging strictly restores baseline parameters $W_0$. Therefore, zero degradation to the production model is guaranteed even in the presence of pathological or adversarial fine-tuning data.
 
 ---
@@ -1930,30 +2406,56 @@ Let $\models$ denote the semantic entailment relation, where $D \models s$ denot
 
 1. **Sentence Citation Recall ($Rec_{\text{cite}}$)**:
    A sentence $s_i$ is recalled if at least one cited passage entails it, or if $s_i$ is an un-citable conversational phrase:
-   $$\mathbb{I}_{\text{rec}}(s_i) = \begin{cases}
-   1 & \text{if } \exists c \in C(s_i) \text{ such that } D_c \models s_i \\
-   1 & \text{if } s_i \text{ is non-factual (e.g. conversational pleasantry)} \\
-   0 & \text{otherwise}
-   \end{cases}$$
-   $$\text{Citation Recall}(Y, \mathcal{D}) = \frac{1}{|S|} \sum_{i=1}^{|S|} \mathbb{I}_{\text{rec}}(s_i)$$
+
+$$
+\mathbb{I}_{\text{rec}}(s_i) = \begin{cases}
+  1 & \text{if } \exists c \in C(s_i) \text{ such that } D_c \models s_i \\
+  1 & \text{if } s_i \text{ is non-factual (e.g. conversational pleasantry)} \\
+  0 & \text{otherwise}
+\end{cases}
+$$
+
+$$
+\text{Citation Recall}(Y, \mathcal{D}) = \frac{1}{|S|} \sum_{i=1}^{|S|} \mathbb{I}_{\text{rec}}(s_i)
+$$
 
 2. **Sentence Citation Precision ($Prec_{\text{cite}}$)**:
    Citation precision penalizes spurious or irrelevant citations attached to sentence $s_i$:
-   $$\text{Citation Precision}(Y, \mathcal{D}) = \frac{\sum_{i=1}^{|S|} \sum_{c \in C(s_i)} \mathbb{I}(D_c \models s_i)}{\max\left(1, \sum_{i=1}^{|S|} |C(s_i)|\right)}$$
+
+$$
+\text{Citation Precision}(Y, \mathcal{D}) = \frac{\sum_{i=1}^{|S|} \sum_{c \in C(s_i)} \mathbb{I}(D_c \models s_i)}{\max\left(1, \sum_{i=1}^{|S|} |C(s_i)|\right)}
+$$
 
 3. **Harmonic Mean Citation $F_1$**:
-   $$F_{1, \text{cite}} = \frac{2 \cdot \text{Citation Recall} \cdot \text{Citation Precision}}{\text{Citation Recall} + \text{Citation Precision} + \epsilon}$$
+
+$$
+F_{1, \text{cite}} = \frac{2 \cdot \text{Citation Recall} \cdot \text{Citation Precision}}{\text{Citation Recall} + \text{Citation Precision} + \epsilon}
+$$
 
 ---
 
 #### 8.3.2 RAGAS Triad Faithfulness Formulation
 Given generated response $Y$ and ground-truth context $C$:
 1. Decompose response into atomic propositions:
-   $$\mathcal{P}(Y) = \{p_1, p_2, \dots, p_M\} = \text{Decompose}(Y)$$
+
+$$
+\mathcal{P}(Y) = \{p_1, p_2, \dots, p_M\} = \text{Decompose}(Y)
+$$
+
 2. Compute claim verification predicate:
-   $$v(p_m, C) = \begin{cases} 1 & \text{if } C \models p_m \\ 0 & \text{otherwise} \end{cases}$$
+
+$$
+v(p_m, C) = \begin{cases}
+  1 & \text{if } C \models p_m \\
+  0 & \text{otherwise}
+\end{cases}
+$$
+
 3. Faithfulness score:
-   $$\mathcal{F}(Y, C) = \frac{1}{|\mathcal{P}(Y)|} \sum_{m=1}^{|\mathcal{P}(Y)|} v(p_m, C) \in [0, 1]$$
+
+$$
+\mathcal{F}(Y, C) = \frac{1}{|\mathcal{P}(Y)|} \sum_{m=1}^{|\mathcal{P}(Y)|} v(p_m, C) \in [0, 1]
+$$
 
 ---
 
@@ -1963,32 +2465,65 @@ For each case $i$, compute candidate quality score $x_i = \text{Score}(\theta_{\
 The paired difference is $d_i = x_i - y_i$.
 
 1. Draw $B = 1000$ bootstrap replicates with replacement:
-   $$\mathcal{S}^{(b)} = \{d_{j_1}, d_{j_2}, \dots, d_{j_N}\}, \quad j_k \sim \text{Uniform}(\{1, \dots, N\}), \quad b = 1, \dots, B$$
+
+$$
+\mathcal{S}^{(b)} = \{d_{j_1}, d_{j_2}, \dots, d_{j_N}\}, \quad j_k \sim \text{Uniform}(\{1, \dots, N\}), \quad b = 1, \dots, B
+$$
+
 2. Compute sample mean difference for each replicate:
-   $$\bar{d}^{(b)} = \frac{1}{N} \sum_{k=1}^N d_{j_k}^{(b)}$$
+
+$$
+\bar{d}^{(b)} = \frac{1}{N} \sum_{k=1}^N d_{j_k}^{(b)}
+$$
+
 3. Sort replicates $\bar{d}^{(1)} \le \dots \le \bar{d}^{(B)}$ to obtain empirical $95\%$ Confidence Interval:
-   $$\text{CI}_{95\%} = \left[ \bar{d}_{(\lfloor 0.025 B \rfloor)}, \; \bar{d}_{(\lceil 0.975 B \rceil)} \right]$$
+
+$$
+\text{CI}_{95\%} = \left[ \bar{d}_{(\lfloor 0.025 B \rfloor)}, \; \bar{d}_{(\lceil 0.975 B \rceil)} \right]
+$$
+
 4. Compute empirical $p$-value:
-   $$p_{\text{bootstrap}} = \frac{1}{B} \sum_{b=1}^B \mathbb{I}(\bar{d}^{(b)} \le 0)$$
+
+$$
+p_{\text{bootstrap}} = \frac{1}{B} \sum_{b=1}^B \mathbb{I}(\bar{d}^{(b)} \le 0)
+$$
 
 ---
 
 #### 8.3.4 Multi-Criteria Autonomous Release Gate Decision Boundary
 The release gate evaluates candidate checkpoint $\theta_{\text{cand}}$ against baseline $\theta_0$ across four orthogonal vectors:
-$$\text{Decision}(\theta_{\text{cand}}) = \begin{cases}
-\text{APPROVED} & \text{if } \mathcal{C}_{\text{forgetting}} \land \mathcal{C}_{\text{faithfulness}} \land \mathcal{C}_{\text{domain\_gain}} \land \mathcal{C}_{\text{statistical\_sig}} \\
-\text{REJECTED} & \text{otherwise}
-\end{cases}$$
+
+$$
+\text{Decision}(\theta_{\text{cand}}) = \begin{cases}
+  \text{APPROVED} & \text{if } \mathcal{C}_{\text{forgetting}} \land \mathcal{C}_{\text{faithfulness}} \land \mathcal{C}_{\text{domain\_gain}} \land \mathcal{C}_{\text{statistical\_sig}} \\
+  \text{REJECTED} & \text{otherwise}
+\end{cases}
+$$
 
 Where the criteria are:
 1. **Anti-Forgetting Criterion**:
-   $$\mathcal{C}_{\text{forgetting}} \iff \Delta \text{PPL}_{\text{anchor}} = \frac{\text{PPL}(\theta_{\text{cand}}, \mathcal{D}_{\text{anchor}}) - \text{PPL}(\theta_0, \mathcal{D}_{\text{anchor}})}{\text{PPL}(\theta_0, \mathcal{D}_{\text{anchor}})} \times 100 \le \tau_{\text{forget}} \quad (\tau_{\text{forget}} = 5.0\%)$$
+
+$$
+\mathcal{C}_{\text{forgetting}} \iff \Delta \text{PPL}_{\text{anchor}} = \frac{\text{PPL}(\theta_{\text{cand}}, \mathcal{D}_{\text{anchor}}) - \text{PPL}(\theta_0, \mathcal{D}_{\text{anchor}})}{\text{PPL}(\theta_0, \mathcal{D}_{\text{anchor}})} \times 100 \le \tau_{\text{forget}} \quad (\tau_{\text{forget}} = 5.0\%)
+$$
+
 2. **Citation Faithfulness Criterion**:
-   $$\mathcal{C}_{\text{faithfulness}} \iff \bar{\mathcal{F}}(\theta_{\text{cand}}, \mathcal{D}_{\text{eval}}) \ge \tau_{\text{faith}} \quad (\tau_{\text{faith}} = 0.85)$$
+
+$$
+\mathcal{C}_{\text{faithfulness}} \iff \bar{\mathcal{F}}(\theta_{\text{cand}}, \mathcal{D}_{\text{eval}}) \ge \tau_{\text{faith}} \quad (\tau_{\text{faith}} = 0.85)
+$$
+
 3. **Domain Competency Gain**:
-   $$\mathcal{C}_{\text{domain\_gain}} \iff \bar{S}_{\text{domain}}(\theta_{\text{cand}}) - \bar{S}_{\text{domain}}(\theta_0) > 0.0$$
+
+$$
+\mathcal{C}_{\text{domain\_gain}} \iff \bar{S}_{\text{domain}}(\theta_{\text{cand}}) - \bar{S}_{\text{domain}}(\theta_0) > 0.0
+$$
+
 4. **Statistical Significance Guard**:
-   $$\mathcal{C}_{\text{statistical\_sig}} \iff \text{CI}_{95\%}^{\text{lower}}(\Delta \text{Score}) > -\delta_{\text{tol}} \land p_{\text{bootstrap}} < 0.05$$
+
+$$
+\mathcal{C}_{\text{statistical\_sig}} \iff \text{CI}_{95\%}^{\text{lower}}(\Delta \text{Score}) > -\delta_{\text{tol}} \land p_{\text{bootstrap}} < 0.05
+$$
 
 Upon `REJECTED`, the failure diagnosis records the offending violation mode:
 - `REGRESSION_ANCHOR`: Model suffered catastrophic forgetting on anchor demonstrations.
@@ -2251,14 +2786,26 @@ Following production LLM evaluation best practices, the suite implements the **F
 For a given benchmark case $c = (q, D, y^*, \mathcal{K}, \mathcal{C})$ where $q$ is the query, $D$ is ground-truth context, $y^*$ is reference answer, $\mathcal{K} = \{k_1, \dots, k_m\}$ are golden keywords, and $\mathcal{C} = \{c_1, \dots, c_p\}$ are required citations:
 
 1. **Keyword Recall ($Rec_{\text{kw}}$)**:
-   $$\text{Hit}(k, y) = \mathbb{I}\left(k \in \text{lower}(y)\right)$$
-   $$Rec_{\text{kw}}(y, \mathcal{K}) = \frac{1}{|\mathcal{K}|} \sum_{k \in \mathcal{K}} \text{Hit}(k, y)$$
+
+$$
+\text{Hit}(k, y) = \mathbb{I}\left(k \in \text{lower}(y)\right)
+$$
+
+$$
+Rec_{\text{kw}}(y, \mathcal{K}) = \frac{1}{|\mathcal{K}|} \sum_{k \in \mathcal{K}} \text{Hit}(k, y)
+$$
 
 2. **Keyword Precision ($Prec_{\text{kw}}$)**:
-   $$Prec_{\text{kw}}(y, \mathcal{K}) = \frac{\sum_{k \in \mathcal{K}} \text{Hit}(k, y)}{\max\left(1, |\text{Tokens}(y) \cap \mathcal{K}_{\text{universe}}|\right)}$$
+
+$$
+Prec_{\text{kw}}(y, \mathcal{K}) = \frac{\sum_{k \in \mathcal{K}} \text{Hit}(k, y)}{\max\left(1, |\text{Tokens}(y) \cap \mathcal{K}_{\text{universe}}|\right)}
+$$
 
 3. **Required Citation Presence ($Pres_{\text{cite}}$)**:
-   $$Pres_{\text{cite}}(y, \mathcal{C}) = \frac{1}{|\mathcal{C}|} \sum_{c \in \mathcal{C}} \mathbb{I}\left(c \in y\right)$$
+
+$$
+Pres_{\text{cite}}(y, \mathcal{C}) = \frac{1}{|\mathcal{C}|} \sum_{c \in \mathcal{C}} \mathbb{I}\left(c \in y\right)
+$$
 
 ---
 
@@ -2393,34 +2940,63 @@ Let text $Y$ contain arbitrary inline citations. The canonical citation parser r
 ##### 2.2 Claim Segmentation & Factual Classification
 Text $Y$ is segmented into sentences $S = \{s_1, \dots, s_N\}$.
 Each sentence is classified into factual or non-factual using lexical conversational filters:
-$$\text{Factual}(s) = \begin{cases}
-0 & \text{if } s \text{ is an introductory greeting, transitional cue, or boilerplate pleasantry} \\
-1 & \text{otherwise}
-\end{cases}$$
+
+$$
+\text{Factual}(s) = \begin{cases}
+  0 & \text{if } s \text{ is an introductory greeting, transitional cue, or boilerplate pleasantry} \\
+  1 & \text{otherwise}
+\end{cases}
+$$
 
 Let $S_{\text{fact}} = \{s \in S \mid \text{Factual}(s) = 1\}$.
 
 ##### 2.3 Multi-Tier Grounding Entailment Index
 Given an atomic sentence claim $s$ and reference document $D$, we compute semantic entailment without external cloud APIs using a robust hybrid containment metric:
-$$C_{\text{lex}}(s, D) = \frac{|\text{ContentTokens}(s) \cap \text{Tokens}(D)|}{|\text{ContentTokens}(s)|}$$
-$$J_{\text{token}}(s, D) = \frac{|\text{Tokens}(s) \cap \text{Tokens}(D)|}{|\text{Tokens}(s) \cup \text{Tokens}(D)|}$$
-$$S_{\text{ground}}(s, D) = \alpha \cdot C_{\text{lex}}(s, D) + (1 - \alpha) \cdot J_{\text{token}}(s, D), \quad \alpha = 0.70$$
+
+$$
+C_{\text{lex}}(s, D) = \frac{|\text{ContentTokens}(s) \cap \text{Tokens}(D)|}{|\text{ContentTokens}(s)|}
+$$
+
+$$
+J_{\text{token}}(s, D) = \frac{|\text{Tokens}(s) \cap \text{Tokens}(D)|}{|\text{Tokens}(s) \cup \text{Tokens}(D)|}
+$$
+
+$$
+S_{\text{ground}}(s, D) = \alpha \cdot C_{\text{lex}}(s, D) + (1 - \alpha) \cdot J_{\text{token}}(s, D), \quad \alpha = 0.70
+$$
 
 The entailment predicate is defined as:
-$$D \models s \iff S_{\text{ground}}(s, D) \ge \tau_{\text{entail}} \quad (\tau_{\text{entail}} = 0.60)$$
+
+$$
+D \models s \iff S_{\text{ground}}(s, D) \ge \tau_{\text{entail}} \quad (\tau_{\text{entail}} = 0.60)
+$$
 
 ##### 2.4 ALCE Citation Metrics (Gao et al., 2023)
 For each factual sentence $s_i \in S_{\text{fact}}$ with associated citation set $C(s_i)$:
 1. **Citation Recall ($Rec_{\text{cite}}$)**:
-   $$Rec_{\text{cite}} = \frac{1}{|S_{\text{fact}}|} \sum_{s_i \in S_{\text{fact}}} \mathbb{I}\left(\exists c \in C(s_i) \text{ s.t. } D_c \models s_i\right)$$
+
+$$
+Rec_{\text{cite}} = \frac{1}{|S_{\text{fact}}|} \sum_{s_i \in S_{\text{fact}}} \mathbb{I}\left(\exists c \in C(s_i) \text{ s.t. } D_c \models s_i\right)
+$$
+
 2. **Citation Precision ($Prec_{\text{cite}}$)**:
-   $$Prec_{\text{cite}} = \frac{\sum_{s_i \in S_{\text{fact}}} \sum_{c \in C(s_i)} \mathbb{I}(D_c \models s_i)}{\max\left(1, \sum_{s_i \in S_{\text{fact}}} |C(s_i)|\right)}$$
+
+$$
+Prec_{\text{cite}} = \frac{\sum_{s_i \in S_{\text{fact}}} \sum_{c \in C(s_i)} \mathbb{I}(D_c \models s_i)}{\max\left(1, \sum_{s_i \in S_{\text{fact}}} |C(s_i)|\right)}
+$$
+
 3. **Harmonic Citation $F_1$**:
-   $$F_{1, \text{cite}} = \frac{2 \cdot Prec_{\text{cite}} \cdot Rec_{\text{cite}}}{Prec_{\text{cite}} + Rec_{\text{cite}} + \epsilon}$$
+
+$$
+F_{1, \text{cite}} = \frac{2 \cdot Prec_{\text{cite}} \cdot Rec_{\text{cite}}}{Prec_{\text{cite}} + Rec_{\text{cite}} + \epsilon}
+$$
 
 ##### 2.5 RAGAS Faithfulness Score (Es et al., 2024)
 Evaluates whether all generated factual claims in the answer are strictly supported by the ground-truth reference context $D_{\text{all}}$, independent of whether citations were explicitly placed:
-$$\mathcal{F}(Y, D_{\text{all}}) = \frac{|\{s \in S_{\text{fact}} \mid D_{\text{all}} \models s\}|}{|S_{\text{fact}}|}$$
+
+$$
+\mathcal{F}(Y, D_{\text{all}}) = \frac{|\{s \in S_{\text{fact}} \mid D_{\text{all}} \models s\}|}{|S_{\text{fact}}|}
+$$
 
 ---
 
@@ -2630,22 +3206,40 @@ A response $y$ is evaluated across $K = 4$ calibrated dimensions on a 5-point Li
    Information density, avoidance of conversational fluff, circular padding, or repetitive rhetoric.
 
 The raw composite score $\mathcal{S}_{\text{raw}}(y)$ is computed as the convex combination:
-$$\mathcal{S}_{\text{raw}}(y) = w_{\mathcal{A}} \mathcal{A} + w_{\mathcal{F}} \mathcal{F} + w_{\mathcal{C}} \mathcal{C} + w_{\mathcal{K}} \mathcal{K}, \quad \sum_{k} w_k = 1.0$$
+
+$$
+\mathcal{S}_{\text{raw}}(y) = w_{\mathcal{A}} \mathcal{A} + w_{\mathcal{F}} \mathcal{F} + w_{\mathcal{C}} \mathcal{C} + w_{\mathcal{K}} \mathcal{K}, \quad \sum_{k} w_k = 1.0
+$$
+
 Standard post-training default weights:
-$$w_{\mathcal{A}} = 0.35, \quad w_{\mathcal{F}} = 0.35, \quad w_{\mathcal{C}} = 0.15, \quad w_{\mathcal{K}} = 0.15$$
+
+$$
+w_{\mathcal{A}} = 0.35, \quad w_{\mathcal{F}} = 0.35, \quad w_{\mathcal{C}} = 0.15, \quad w_{\mathcal{K}} = 0.15
+$$
 
 ##### (B) Verbosity Bias Mitigation (Length-Normalized Penalty)
 Judges exhibit an unprincipled preference for longer sequences. To correct this, let $L(y) = |y|_{\text{tokens}}$ and $L^* = \max(|y^*|_{\text{tokens}}, 1)$.
 The length ratio is:
-$$r_L(y) = \frac{L(y)}{L^*}$$
+
+$$
+r_L(y) = \frac{L(y)}{L^*}
+$$
+
 We define the soft-threshold length penalty multiplier $\phi(r_L)$:
-$$\phi(r_L) = \begin{cases}
-1.0 & \text{if } r_L \le \tau_{\text{len}} \\
-\exp\left(-\lambda_{\text{len}} (r_L - \tau_{\text{len}})\right) & \text{if } r_L > \tau_{\text{len}}
-\end{cases}$$
+
+$$
+\phi(r_L) = \begin{cases}
+  1.0 & \text{if } r_L \le \tau_{\text{len}} \\
+  \exp\left(-\lambda_{\text{len}} (r_L - \tau_{\text{len}})\right) & \text{if } r_L > \tau_{\text{len}}
+\end{cases}
+$$
+
 where $\tau_{\text{len}} = 1.8$ (generous tolerance before penalty) and $\lambda_{\text{len}} = 0.15$ (exponential decay rate).
 The calibrated scalar score is bounded below by 1.0:
-$$\mathcal{S}_{\text{calibrated}}(y) = \max\left(1.0, \, \mathcal{S}_{\text{raw}}(y) \cdot \phi(r_L)\right)$$
+
+$$
+\mathcal{S}_{\text{calibrated}}(y) = \max\left(1.0, \, \mathcal{S}_{\text{raw}}(y) \cdot \phi(r_L)\right)
+$$
 
 ##### (C) Pairwise Position Bias Mitigation (Position-Swap Averaging)
 In pairwise comparisons between Candidate $A$ and Candidate $B$, evaluation is conducted in two symmetric passes:
@@ -2653,33 +3247,64 @@ In pairwise comparisons between Candidate $A$ and Candidate $B$, evaluation is c
 - **Pass 2** (Sequence: $[B, A]$): Judge produces individual ratings $s_2(B)$ and $s_2(A)$.
 
 The position-debiased ratings are defined as:
-$$\bar{S}(A) = \frac{s_1(A) + s_2(A)}{2}, \quad \bar{S}(B) = \frac{s_1(B) + s_2(B)}{2}$$
-$$\Delta_{\text{debiased}} = \bar{S}(A) - \bar{S}(B)$$
+
+$$
+\bar{S}(A) = \frac{s_1(A) + s_2(A)}{2}, \quad \bar{S}(B) = \frac{s_1(B) + s_2(B)}{2}
+$$
+
+$$
+\Delta_{\text{debiased}} = \bar{S}(A) - \bar{S}(B)
+$$
 
 Given tie tolerance threshold $\epsilon_{\text{tie}} = 0.15$:
-$$\text{Winner} = \begin{cases}
-\text{'A'} & \text{if } \Delta_{\text{debiased}} > \epsilon_{\text{tie}} \\
-\text{'B'} & \text{if } \Delta_{\text{debiased}} < -\epsilon_{\text{tie}} \\
-\text{'TIE'} & \text{if } |\Delta_{\text{debiased}}| \le \epsilon_{\text{tie}}
-\end{cases}$$
+
+$$
+\text{Winner} = \begin{cases}
+  \text{'A'} & \text{if } \Delta_{\text{debiased}} > \epsilon_{\text{tie}} \\
+  \text{'B'} & \text{if } \Delta_{\text{debiased}} < -\epsilon_{\text{tie}} \\
+  \text{'TIE'} & \text{if } |\Delta_{\text{debiased}}| \le \epsilon_{\text{tie}}
+\end{cases}
+$$
 
 We quantify the judge's positional vulnerability via the **Position Inconsistency Coefficient** $\kappa_{\text{pos}} \in [0.0, 1.0]$:
-$$\kappa_{\text{pos}} = \frac{1}{2} \cdot \frac{|s_1(A) - s_2(A)| + |s_1(B) - s_2(B)|}{4.0}$$
+
+$$
+\kappa_{\text{pos}} = \frac{1}{2} \cdot \frac{|s_1(A) - s_2(A)| + |s_1(B) - s_2(B)|}{4.0}
+$$
+
 where the normalization factor $4.0$ represents the maximum possible score delta ($5.0 - 1.0$). If $\kappa_{\text{pos}} > 0.25$, an inconsistency alert is logged.
 
 ##### (D) Deterministic Heuristic Scoring Equations
 For offline testing and environments without live LLM inference endpoints, the deterministic heuristic engine computes rubric dimensions analytically:
 1. **Accuracy**:
-   $$\mathcal{A}_{\text{heur}} = 1.0 + 4.0 \cdot \left(0.60 \cdot \text{Coverage}(y, \mathcal{K}^*) + 0.40 \cdot \text{Jaccard}(y, y^*)\right)$$
+
+$$
+\mathcal{A}_{\text{heur}} = 1.0 + 4.0 \cdot \left(0.60 \cdot \text{Coverage}(y, \mathcal{K}^*) + 0.40 \cdot \text{Jaccard}(y, y^*)\right)
+$$
+
 2. **Faithfulness**:
    Utilizes the Phase 4.2 `CitationVerifier` sentence-level factual entailment:
-   $$\mathcal{F}_{\text{heur}} = 1.0 + 4.0 \cdot \text{FaithfulnessScore}(y, C)$$
+
+$$
+\mathcal{F}_{\text{heur}} = 1.0 + 4.0 \cdot \text{FaithfulnessScore}(y, C)
+$$
+
 3. **Clarity**:
    Penalizes degenerative token repetition and formatting irregularities:
-   $$\text{RepPenalty}(y) = 1.0 - \frac{|\text{Unique 3-grams}(y)|}{\max(|\text{Total 3-grams}(y)|, 1)}$$
-   $$\mathcal{C}_{\text{heur}} = \max\left(1.0, 5.0 - 4.0 \cdot \text{RepPenalty}(y)\right)$$
+
+$$
+\text{RepPenalty}(y) = 1.0 - \frac{|\text{Unique 3-grams}(y)|}{\max(|\text{Total 3-grams}(y)|, 1)}
+$$
+
+$$
+\mathcal{C}_{\text{heur}} = \max\left(1.0, 5.0 - 4.0 \cdot \text{RepPenalty}(y)\right)
+$$
+
 4. **Conciseness**:
-   $$\mathcal{K}_{\text{heur}} = 1.0 + 4.0 \cdot \max\left(0.0, \min\left(1.0, 2.0 - r_L(y)\right)\right)$$
+
+$$
+\mathcal{K}_{\text{heur}} = 1.0 + 4.0 \cdot \max\left(0.0, \min\left(1.0, 2.0 - r_L(y)\right)\right)
+$$
 
 ---
 
@@ -2852,31 +3477,67 @@ Given paired candidate and baseline evaluation scores $\mathcal{S} = \{(s_i, b_i
 1. For bootstrap iteration $b = 1, \dots, B$ (where $B = 1000$):
    Sample $N$ indices with replacement $\pi_b \sim \text{Uniform}(\{1, \dots, N\})$.
    Compute the mean paired delta for replicate $b$:
-   $$\Delta^{*b} = \frac{1}{N} \sum_{i=1}^N \left( s_{\pi_b(i)} - b_{\pi_b(i)} \right)$$
+
+$$
+\Delta^{*b} = \frac{1}{N} \sum_{i=1}^N \left( s_{\pi_b(i)} - b_{\pi_b(i)} \right)
+$$
+
 2. Sort the bootstrap replicates: $\Delta^{*(1)} \le \Delta^{*(2)} \le \dots \le \Delta^{*(B)}$.
 3. For significance level $\alpha = 0.05$ (95% two-sided confidence interval):
-   $$CI_{\text{lower}} = \Delta^{*(\lfloor B \cdot \frac{\alpha}{2} \rfloor)}, \quad CI_{\text{upper}} = \Delta^{*(\lceil B \cdot (1 - \frac{\alpha}{2}) \rceil)}$$
+
+$$
+CI_{\text{lower}} = \Delta^{*(\lfloor B \cdot \frac{\alpha}{2} \rfloor)}, \quad CI_{\text{upper}} = \Delta^{*(\lceil B \cdot (1 - \frac{\alpha}{2}) \rceil)}
+$$
+
 4. Compute empirical one-tailed probability of regression ($H_0: \Delta \ge 0$ vs $H_1: \Delta < 0$):
-   $$p_{\text{boot\_regress}} = \frac{1}{B} \sum_{b=1}^B \mathbb{I}(\Delta^{*b} \le 0)$$
+
+$$
+p_{\text{boot\_regress}} = \frac{1}{B} \sum_{b=1}^B \mathbb{I}(\Delta^{*b} \le 0)
+$$
 
 ##### (B) Wilcoxon Signed-Rank Test (Paired Continuous Rubrics)
 Let $d_i = s_i - b_i$ for $i = 1, \dots, N$.
 1. Exclude all pairs where $d_i = 0$, leaving $N_r \le N$ non-zero paired differences.
 2. Rank absolute differences $|d_i|$ in ascending order from $1$ to $N_r$, assigning average ranks to tied values.
 3. Compute the sum of positive and negative ranks:
-   $$W^+ = \sum_{d_i > 0} \text{rank}(|d_i|), \quad W^- = \sum_{d_i < 0} \text{rank}(|d_i|)$$
+
+$$
+W^+ = \sum_{d_i > 0} \text{rank}(|d_i|), \quad W^- = \sum_{d_i < 0} \text{rank}(|d_i|)
+$$
+
 4. The expected value $\mu_W$ and variance $\sigma_W^2$ under the null hypothesis of symmetric distribution around 0:
-   $$\mu_W = \frac{N_r(N_r + 1)}{4}$$
-   $$\sigma_W^2 = \frac{N_r(N_r + 1)(2N_r + 1) - \frac{1}{2} \sum_{j} (t_j^3 - t_j)}{24}$$
+
+$$
+\mu_W = \frac{N_r(N_r + 1)}{4}
+$$
+
+$$
+\sigma_W^2 = \frac{N_r(N_r + 1)(2N_r + 1) - \frac{1}{2} \sum_{j} (t_j^3 - t_j)}{24}
+$$
+
    where $t_j$ is the number of tied ranks in tie group $j$.
 5. The continuity-corrected test statistic:
-   $$z = \frac{W^+ - \mu_W - 0.5 \cdot \text{sign}(W^+ - \mu_W)}{\sigma_W}$$
+
+$$
+z = \frac{W^+ - \mu_W - 0.5 \cdot \text{sign}(W^+ - \mu_W)}{\sigma_W}
+$$
+
 6. Two-sided asymptotic p-value:
-   $$p_{\text{wilcoxon}} = 2 \cdot \left( 1 - \Phi(|z|) \right)$$
+
+$$
+p_{\text{wilcoxon}} = 2 \cdot \left( 1 - \Phi(|z|) \right)
+$$
 
 ##### (C) Edwards Continuity-Corrected McNemar Discordance Test
 For each test case $i$, define binary status:
-$$\text{Status}(y_i) = \begin{cases} \text{PASS} & \text{if } \mathcal{S}(y_i) \ge \tau_{\text{pass}} \text{ and } \text{Faithfulness}(y_i) \ge \tau_{\text{faith}} \\ \text{FAIL} & \text{otherwise} \end{cases}$$
+
+$$
+\text{Status}(y_i) = \begin{cases}
+  \text{PASS} & \text{if } \mathcal{S}(y_i) \ge \tau_{\text{pass}} \text{ and } \text{Faithfulness}(y_i) \ge \tau_{\text{faith}} \\
+  \text{FAIL} & \text{otherwise}
+\end{cases}
+$$
+
 where default thresholds are $\tau_{\text{pass}} = 3.5$ and $\tau_{\text{faith}} = 0.80$.
 
 Construct the $2 \times 2$ paired contingency table:
@@ -2886,11 +3547,25 @@ Construct the $2 \times 2$ paired contingency table:
 - $n_{00}$: Both Candidate and Baseline FAIL
 
 Under null hypothesis $H_0: p_b = p_c$ (equal discordance rate), Edwards continuity-corrected McNemar statistic:
-$$\chi^2 = \begin{cases} \frac{(|b - c| - 1)^2}{b + c} & \text{if } b + c > 0 \\ 0.0 & \text{if } b + c = 0 \end{cases}$$
+
+$$
+\chi^2 = \begin{cases}
+  \frac{(|b - c| - 1)^2}{b + c} & \text{if } b + c > 0 \\
+  0.0 & \text{if } b + c = 0
+\end{cases}
+$$
+
 The two-sided p-value is computed from the Chi-square distribution with 1 degree of freedom:
-$$p_{\text{mcnemar}} = 1 - F_{\chi^2_1}(\chi^2)$$
+
+$$
+p_{\text{mcnemar}} = 1 - F_{\chi^2_1}(\chi^2)
+$$
+
 We define the **Discordance Regression Ratio**:
-$$\mathcal{R}_{\text{regress}} = \frac{c}{\max(b + c, 1)}$$
+
+$$
+\mathcal{R}_{\text{regress}} = \frac{c}{\max(b + c, 1)}
+$$
 
 ##### (D) Stratified Four-Bucket Gating Rules
 1. **Core Domain (12 Cases)**:
@@ -2905,12 +3580,15 @@ $$\mathcal{R}_{\text{regress}} = \frac{c}{\max(b + c, 1)}$$
 
 ##### (E) Decision Matrix & Gate Classification
 The release gate assigns an autonomous verdict $\mathcal{D} \in \{\text{PROCEED\_DEPLOY}, \text{BLOCK\_RELEASE}, \text{TRIGGER\_ROLLBACK}, \text{ALERT\_DRIFT}\}$:
-$$\mathcal{D} = \begin{cases}
-\text{TRIGGER\_ROLLBACK} & \text{if } c_{\text{core}} > 0 \text{ or } c_{\text{regr}} > 0 \text{ or } (CI_{\text{upper}} < 0) \text{ or } (p_{\text{wilcoxon}} < 0.05 \text{ and } \bar{\Delta} < 0) \\
-\text{ALERT\_DRIFT} & \text{if } (CI_{\text{upper}} - CI_{\text{lower}} > 0.80) \text{ or } \kappa_{\text{pos}} > 0.25 \\
-\text{PROCEED\_DEPLOY} & \text{if } c_{\text{core}} = 0 \text{ and } c_{\text{regr}} = 0 \text{ and } (CI_{\text{lower}} > 0 \text{ or } (CI_{\text{lower}} \ge -0.05 \text{ and } \bar{\Delta} \ge 0.0)) \\
-\text{BLOCK\_RELEASE} & \text{otherwise}
-\end{cases}$$
+
+$$
+\mathcal{D} = \begin{cases}
+  \text{TRIGGER\_ROLLBACK} & \text{if } c_{\text{core}} > 0 \text{ or } c_{\text{regr}} > 0 \text{ or } (CI_{\text{upper}} < 0) \text{ or } (p_{\text{wilcoxon}} < 0.05 \text{ and } \bar{\Delta} < 0) \\
+  \text{ALERT\_DRIFT} & \text{if } (CI_{\text{upper}} - CI_{\text{lower}} > 0.80) \text{ or } \kappa_{\text{pos}} > 0.25 \\
+  \text{PROCEED\_DEPLOY} & \text{if } c_{\text{core}} = 0 \text{ and } c_{\text{regr}} = 0 \text{ and } (CI_{\text{lower}} > 0 \text{ or } (CI_{\text{lower}} \ge -0.05 \text{ and } \bar{\Delta} \ge 0.0)) \\
+  \text{BLOCK\_RELEASE} & \text{otherwise}
+\end{cases}
+$$
 
 ---
 
@@ -3034,7 +3712,11 @@ class RollbackOrchestrator:
 
 1. **Bradley, R. A., & Terry, M. E. (1952)**: *Rank analysis of incomplete block designs: I. The method of paired comparisons*. Biometrika, 39(3/4), 324–345.
    - **Foundational Premise**: Models the probability that an individual prefers option $y_w$ over $y_l$ given prompt $x$ as a logistic sigmoid over latent scalar rewards:
-     $$P(y_w \succ y_l \mid x) = \sigma(r(x, y_w) - r(x, y_l)) = \frac{1}{1 + e^{-(r(x, y_w) - r(x, y_l))}}$$
+
+$$
+P(y_w \succ y_l \mid x) = \sigma(r(x, y_w) - r(x, y_l)) = \frac{1}{1 + e^{-(r(x, y_w) - r(x, y_l))}}
+$$
+
    - Forms the mathematical bedrock of all modern RLHF reward modeling.
 
 2. **Ouyang, L., Wu, J., Jiang, X., et al. (NeurIPS 2022)**: *Training language models to follow instructions with human feedback* (InstructGPT).
@@ -3042,23 +3724,43 @@ class RollbackOrchestrator:
      1. Supervised Fine-Tuning (SFT) on prompt-response demonstrations.
      2. Training a scalar Reward Model $r_\phi(x, y)$ on human preference pairs via Bradley-Terry loss.
      3. Reinforcement Learning via Proximal Policy Optimization (PPO) against the reward model with a KL divergence penalty to the frozen SFT baseline $\pi_{\text{ref}}$:
-        $$\max_\theta \mathbb{E}_{x \sim \mathcal{D}, y \sim \pi_\theta(\cdot \mid x)} \left[ r_\phi(x, y) - \beta \mathbb{D}_{\text{KL}}(\pi_\theta(y \mid x) \parallel \pi_{\text{ref}}(y \mid x)) \right]$$
+
+$$
+\max_\theta \mathbb{E}_{x \sim \mathcal{D}, y \sim \pi_\theta(\cdot \mid x)} \left[ r_\phi(x, y) - \beta \mathbb{D}_{\text{KL}}(\pi_\theta(y \mid x) \parallel \pi_{\text{ref}}(y \mid x)) \right]
+$$
+
    - **Key Limitation**: Required simultaneously hosting four models in memory during PPO training (Actor Policy $\pi_\theta$, Critic / Value Function $V_\psi$, Reference Policy $\pi_{\text{ref}}$, and Reward Model $r_\phi$), creating immense memory overhead, training instability, and hyperparameter sensitivity.
 
 3. **Rafailov, R., Sharma, A., Mitchell, E., Ermon, S., Manning, C. D., & Finn, C. (NeurIPS 2023)**: *Direct Preference Optimization: Your Language Model is Secretly a Reward Model* (DPO).
    - **Theoretical Breakthrough**: Proved that the constrained RL optimization problem has an exact closed-form analytical solution for the optimal policy:
-     $$\pi^*(y \mid x) = \frac{1}{Z(x)} \pi_{\text{ref}}(y \mid x) \exp\left( \frac{1}{\beta} r(x, y) \right)$$
+
+$$
+\pi^*(y \mid x) = \frac{1}{Z(x)} \pi_{\text{ref}}(y \mid x) \exp\left( \frac{1}{\beta} r(x, y) \right)
+$$
+
    - Inverting this relationship expresses the reward function directly in terms of the optimal policy's log-likelihood ratio against the reference policy:
-     $$r(x, y) = \beta \log \frac{\pi^*(y \mid x)}{\pi_{\text{ref}}(y \mid x)} + \beta \log Z(x)$$
+
+$$
+r(x, y) = \beta \log \frac{\pi^*(y \mid x)}{\pi_{\text{ref}}(y \mid x)} + \beta \log Z(x)
+$$
+
    - When substituted into the Bradley-Terry preference probability, the intractable partition function $Z(x) = \sum_y \pi_{\text{ref}}(y \mid x) \exp\left(\frac{1}{\beta} r(x, y)\right)$ **strictly cancels out**:
-     $$P(y_w \succ y_l \mid x) = \sigma\left( \beta \log \frac{\pi_\theta(y_w \mid x)}{\pi_{\text{ref}}(y_w \mid x)} - \beta \log \frac{\pi_\theta(y_l \mid x)}{\pi_{\text{ref}}(y_l \mid x)} \right)$$
+
+$$
+P(y_w \succ y_l \mid x) = \sigma\left( \beta \log \frac{\pi_\theta(y_w \mid x)}{\pi_{\text{ref}}(y_w \mid x)} - \beta \log \frac{\pi_\theta(y_l \mid x)}{\pi_{\text{ref}}(y_l \mid x)} \right)
+$$
+
    - **Impact**: Enables direct, stable, offline preference optimization without requiring a separate reward model or RL policy gradient rollouts.
 
 4. **Shao, Z., Wang, P., Zhu, Q., et al. (2024)**: *DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models*.
    - **Invention of GRPO**: Introduced **Group Relative Policy Optimization (GRPO)** to overcome the memory and stability bottlenecks of PPO.
    - **Core Insight**: PPO requires a Value Network / Critic $V_\psi(s)$ to estimate baseline state values for Generalized Advantage Estimation (GAE). The critic is typically the same size as the actor model, doubling GPU memory requirements and suffering from high value approximation error.
    - **The GRPO Solution**: For each prompt $x$, sample a group of $G$ candidate outputs $\{y_1, y_2, \dots, y_G\}$ from the old policy $\pi_{\text{old}}$. Evaluate each output with rule-based or task-specific reward functions $R = \{R_1, \dots, R_G\}$. Compute advantages purely through intra-group normalization:
-     $$\hat{A}_i = \frac{R_i - \text{mean}(R)}{\text{std}(R) + \epsilon}$$
+
+$$
+\hat{A}_i = \frac{R_i - \text{mean}(R)}{\text{std}(R) + \epsilon}
+$$
+
    - Eliminates the critic network used by PPO-style actor-critic training. Memory savings are configuration-dependent; there is no universal 50% reduction or general performance guarantee.
 
 5. **DeepSeek-AI (2025)**: *DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning*.
@@ -3074,46 +3776,88 @@ class RollbackOrchestrator:
 
 #### (A) Bradley-Terry Pairwise Reward Modeling
 For a prompt $x$ and pair of responses $(y_w, y_l)$ where $y_w$ is preferred over $y_l$, a parameterized scalar reward model $r_\phi(x, y)$ is trained by minimizing the negative log-likelihood:
-$$\mathcal{L}_{\text{BT}}(\phi) = -\mathbb{E}_{(x, y_w, y_l) \sim \mathcal{D}} \left[ \log \sigma(r_\phi(x, y_w) - r_\phi(x, y_l)) \right]$$
+
+$$
+\mathcal{L}_{\text{BT}}(\phi) = -\mathbb{E}_{(x, y_w, y_l) \sim \mathcal{D}} \left[ \log \sigma(r_\phi(x, y_w) - r_\phi(x, y_l)) \right]
+$$
 
 To ensure numerical stability and prevent reward scale explosion, an optional margin $\gamma > 0$ and $L_2$ regularization penalty are introduced:
-$$\mathcal{L}_{\text{BT-reg}}(\phi) = -\mathbb{E}_{(x, y_w, y_l)} \left[ \log \sigma(r_\phi(x, y_w) - r_\phi(x, y_l) - \gamma) \right] + \lambda_{\text{reg}} \cdot \frac{1}{2} \left( r_\phi(x, y_w)^2 + r_\phi(x, y_l)^2 \right)$$
+
+$$
+\mathcal{L}_{\text{BT-reg}}(\phi) = -\mathbb{E}_{(x, y_w, y_l)} \left[ \log \sigma(r_\phi(x, y_w) - r_\phi(x, y_l) - \gamma) \right] + \lambda_{\text{reg}} \cdot \frac{1}{2} \left( r_\phi(x, y_w)^2 + r_\phi(x, y_l)^2 \right)
+$$
 
 The gradient with respect to $\phi$ is:
-$$\nabla_\phi \mathcal{L}_{\text{BT}} = -\mathbb{E}_{(x, y_w, y_l)} \left[ \sigma(r_\phi(x, y_l) - r_\phi(x, y_w)) \cdot \left( \nabla_\phi r_\phi(x, y_w) - \nabla_\phi r_\phi(x, y_l) \right) \right]$$
+
+$$
+\nabla_\phi \mathcal{L}_{\text{BT}} = -\mathbb{E}_{(x, y_w, y_l)} \left[ \sigma(r_\phi(x, y_l) - r_\phi(x, y_w)) \cdot \left( \nabla_\phi r_\phi(x, y_w) - \nabla_\phi r_\phi(x, y_l) \right) \right]
+$$
+
 where the scalar error weight $\sigma(r_\phi(x, y_l) - r_\phi(x, y_w)) \in (0, 1)$ automatically down-weights pairs that the reward model already ranks correctly with high confidence.
 
 ---
 
 #### (B) Direct Preference Optimization (DPO) Derivation & Dynamics
 The standard KL-regularized RL objective is:
-$$\max_{\pi} \mathbb{E}_{x \sim \mathcal{D}} \left[ \mathbb{E}_{y \sim \pi(\cdot \mid x)} [r(x, y)] - \beta \mathbb{D}_{\text{KL}}(\pi(\cdot \mid x) \parallel \pi_{\text{ref}}(\cdot \mid x)) \right]$$
+
+$$
+\max_{\pi} \mathbb{E}_{x \sim \mathcal{D}} \left[ \mathbb{E}_{y \sim \pi(\cdot \mid x)} [r(x, y)] - \beta \mathbb{D}_{\text{KL}}(\pi(\cdot \mid x) \parallel \pi_{\text{ref}}(\cdot \mid x)) \right]
+$$
 
 Expanding the expectation and KL divergence for a given prompt $x$:
-$$\max_\pi \sum_y \pi(y \mid x) r(x, y) - \beta \sum_y \pi(y \mid x) \log \frac{\pi(y \mid x)}{\pi_{\text{ref}}(y \mid x)} = -\beta \min_\pi \sum_y \pi(y \mid x) \left[ \log \frac{\pi(y \mid x)}{\pi_{\text{ref}}(y \mid x)} - \frac{1}{\beta} r(x, y) \right]$$
+
+$$
+\max_\pi \sum_y \pi(y \mid x) r(x, y) - \beta \sum_y \pi(y \mid x) \log \frac{\pi(y \mid x)}{\pi_{\text{ref}}(y \mid x)} = -\beta \min_\pi \sum_y \pi(y \mid x) \left[ \log \frac{\pi(y \mid x)}{\pi_{\text{ref}}(y \mid x)} - \frac{1}{\beta} r(x, y) \right]
+$$
 
 Defining the partition function $Z(x) = \sum_y \pi_{\text{ref}}(y \mid x) \exp\left( \frac{1}{\beta} r(x, y) \right)$ and the optimal distribution:
-$$\pi^*(y \mid x) = \frac{1}{Z(x)} \pi_{\text{ref}}(y \mid x) \exp\left( \frac{1}{\beta} r(x, y) \right)$$
+
+$$
+\pi^*(y \mid x) = \frac{1}{Z(x)} \pi_{\text{ref}}(y \mid x) \exp\left( \frac{1}{\beta} r(x, y) \right)
+$$
 
 The objective simplifies to minimizing the KL divergence between $\pi$ and $\pi^*$:
-$$\min_\pi \mathbb{D}_{\text{KL}}(\pi(\cdot \mid x) \parallel \pi^*(\cdot \mid x)) - \log Z(x)$$
+
+$$
+\min_\pi \mathbb{D}_{\text{KL}}(\pi(\cdot \mid x) \parallel \pi^*(\cdot \mid x)) - \log Z(x)
+$$
+
 Since the minimum of a KL divergence is zero when $\pi = \pi^*$, the unique global optimum is analytically:
-$$\pi^*(y \mid x) = \frac{1}{Z(x)} \pi_{\text{ref}}(y \mid x) \exp\left( \frac{1}{\beta} r(x, y) \right)$$
+
+$$
+\pi^*(y \mid x) = \frac{1}{Z(x)} \pi_{\text{ref}}(y \mid x) \exp\left( \frac{1}{\beta} r(x, y) \right)
+$$
 
 Taking the logarithm and solving for $r(x, y)$:
-$$r(x, y) = \beta \log \frac{\pi^*(y \mid x)}{\pi_{\text{ref}}(y \mid x)} + \beta \log Z(x)$$
+
+$$
+r(x, y) = \beta \log \frac{\pi^*(y \mid x)}{\pi_{\text{ref}}(y \mid x)} + \beta \log Z(x)
+$$
 
 Now substitute this expression into the Bradley-Terry preference probability:
-$$P(y_w \succ y_l \mid x) = \sigma(r(x, y_w) - r(x, y_l)) = \sigma\left( \left( \beta \log \frac{\pi^*(y_w \mid x)}{\pi_{\text{ref}}(y_w \mid x)} + \beta \log Z(x) \right) - \left( \beta \log \frac{\pi^*(y_l \mid x)}{\pi_{\text{ref}}(y_l \mid x)} + \beta \log Z(x) \right) \right)$$
+
+$$
+P(y_w \succ y_l \mid x) = \sigma(r(x, y_w) - r(x, y_l)) = \sigma\left( \left( \beta \log \frac{\pi^*(y_w \mid x)}{\pi_{\text{ref}}(y_w \mid x)} + \beta \log Z(x) \right) - \left( \beta \log \frac{\pi^*(y_l \mid x)}{\pi_{\text{ref}}(y_l \mid x)} + \beta \log Z(x) \right) \right)
+$$
 
 The partition functions $\beta \log Z(x)$ **cancel identically**, yielding the DPO loss:
-$$\mathcal{L}_{\text{DPO}}(\theta; \pi_{\text{ref}}) = -\mathbb{E}_{(x, y_w, y_l)} \left[ \log \sigma\left( \beta \log \frac{\pi_\theta(y_w \mid x)}{\pi_{\text{ref}}(y_w \mid x)} - \beta \log \frac{\pi_\theta(y_l \mid x)}{\pi_{\text{ref}}(y_l \mid x)} \right) \right]$$
+
+$$
+\mathcal{L}_{\text{DPO}}(\theta; \pi_{\text{ref}}) = -\mathbb{E}_{(x, y_w, y_l)} \left[ \log \sigma\left( \beta \log \frac{\pi_\theta(y_w \mid x)}{\pi_{\text{ref}}(y_w \mid x)} - \beta \log \frac{\pi_\theta(y_l \mid x)}{\pi_{\text{ref}}(y_l \mid x)} \right) \right]
+$$
 
 Let the implicit reward be defined as:
-$$\hat{r}_\theta(x, y) = \beta \log \frac{\pi_\theta(y \mid x)}{\pi_{\text{ref}}(y \mid x)} = \beta \sum_{t=1}^{|y|} \left( \log \pi_\theta(y_t \mid x, y_{<t}) - \log \pi_{\text{ref}}(y_t \mid x, y_{<t}) \right)$$
+
+$$
+\hat{r}_\theta(x, y) = \beta \log \frac{\pi_\theta(y \mid x)}{\pi_{\text{ref}}(y \mid x)} = \beta \sum_{t=1}^{|y|} \left( \log \pi_\theta(y_t \mid x, y_{<t}) - \log \pi_{\text{ref}}(y_t \mid x, y_{<t}) \right)
+$$
 
 The gradient with respect to policy parameters $\theta$ reveals the exact mechanics of DPO:
-$$\nabla_\theta \mathcal{L}_{\text{DPO}}(\theta) = -\beta \, \mathbb{E}_{(x, y_w, y_l)} \left[ \underbrace{\sigma(\hat{r}_\theta(x, y_l) - \hat{r}_\theta(x, y_w))}_{\text{Dynamic Weight } w(x, y_w, y_l)} \cdot \left( \underbrace{\nabla_\theta \log \pi_\theta(y_w \mid x)}_{\text{Increase likelihood of } y_w} - \underbrace{\nabla_\theta \log \pi_\theta(y_l \mid x)}_{\text{Decrease likelihood of } y_l} \right) \right]$$
+
+$$
+\nabla_\theta \mathcal{L}_{\text{DPO}}(\theta) = -\beta \, \mathbb{E}_{(x, y_w, y_l)} \left[ \underbrace{\sigma(\hat{r}_\theta(x, y_l) - \hat{r}_\theta(x, y_w))}_{\text{Dynamic Weight } w(x, y_w, y_l)} \cdot \left( \underbrace{\nabla_\theta \log \pi_\theta(y_w \mid x)}_{\text{Increase likelihood of } y_w} - \underbrace{\nabla_\theta \log \pi_\theta(y_l \mid x)}_{\text{Decrease likelihood of } y_l} \right) \right]
+$$
+
 - When the model mistakenly believes $y_l$ is better than $y_w$ ($\hat{r}_\theta(x, y_l) > \hat{r}_\theta(x, y_w)$), the dynamic weight approaches $1.0$, producing a large gradient update.
 - When the model correctly separates the pair with high margin ($\hat{r}_\theta(x, y_w) \gg \hat{r}_\theta(x, y_l)$), the weight approaches $0.0$, preventing over-optimization.
 
@@ -3123,32 +3867,58 @@ $$\nabla_\theta \mathcal{L}_{\text{DPO}}(\theta) = -\beta \, \mathbb{E}_{(x, y_w
 In GRPO, the training workflow operates iteratively in groups:
 1. **Group Rollout Generation**:
    Given a prompt $x$ from dataset $\mathcal{D}$, the current policy $\pi_\theta$ samples a group of $G$ distinct completions via nucleus or temperature sampling:
-   $$\{y_1, y_2, \dots, y_G\} \sim \pi_\theta(\cdot \mid x)$$
+
+$$
+\{y_1, y_2, \dots, y_G\} \sim \pi_\theta(\cdot \mid x)
+$$
 
 2. **Multi-Objective Reward Evaluation**:
    Each completion $y_i$ is evaluated by verifiable reward functions:
-   $$R_i = \text{Reward}(x, y_i) \in \mathbb{R}$$
+
+$$
+R_i = \text{Reward}(x, y_i) \in \mathbb{R}
+$$
 
 3. **Critic-Free Group Advantage Normalization**:
    The group mean $\mu_R$ and sample standard deviation $\sigma_R$ are computed:
-   $$\mu_R = \frac{1}{G} \sum_{j=1}^G R_j, \quad \sigma_R = \sqrt{\frac{1}{G} \sum_{j=1}^G (R_j - \mu_R)^2 + \epsilon}$$
+
+$$
+\mu_R = \frac{1}{G} \sum_{j=1}^G R_j, \quad \sigma_R = \sqrt{\frac{1}{G} \sum_{j=1}^G (R_j - \mu_R)^2 + \epsilon}
+$$
+
    The standardized advantage for each sequence $y_i$ is:
-   $$\hat{A}_i = \frac{R_i - \mu_R}{\sigma_R}$$
+
+$$
+\hat{A}_i = \frac{R_i - \mu_R}{\sigma_R}
+$$
 
 4. **Policy Ratio & Clipped Surrogate Objective**:
    For each token $t \in \{1, \dots, |y_i|\}$, the probability ratio between the updated policy $\pi_\theta$ and the generation policy $\pi_{\text{old}}$ is:
-   $$\rho_{i,t}(\theta) = \frac{\pi_\theta(y_{i,t} \mid x, y_{i,<t})}{\pi_{\text{old}}(y_{i,t} \mid x, y_{i,<t})}$$
+
+$$
+\rho_{i,t}(\theta) = \frac{\pi_\theta(y_{i,t} \mid x, y_{i,<t})}{\pi_{\text{old}}(y_{i,t} \mid x, y_{i,<t})}
+$$
 
    The PPO-clipped surrogate is computed:
-   $$\text{obj}_{i,t}^{\text{clip}}(\theta) = \min\left( \rho_{i,t}(\theta) \hat{A}_i, \, \text{clip}(\rho_{i,t}(\theta), 1 - \epsilon_{\text{clip}}, 1 + \epsilon_{\text{clip}}) \hat{A}_i \right)$$
+
+$$
+\text{obj}_{i,t}^{\text{clip}}(\theta) = \min\left( \rho_{i,t}(\theta) \hat{A}_i, \, \text{clip}(\rho_{i,t}(\theta), 1 - \epsilon_{\text{clip}}, 1 + \epsilon_{\text{clip}}) \hat{A}_i \right)
+$$
 
 5. **Unbiased Per-Token KL Divergence Penalty**:
    To prevent policy collapse and deviation from reference baseline $\pi_{\text{ref}}$, we employ the unbiased non-negative KL divergence estimator (Schulman, 2020):
-   $$\mathbb{D}_{\text{KL}, i, t}(\pi_\theta \parallel \pi_{\text{ref}}) = \frac{\pi_{\text{ref}}(y_{i,t} \mid x, y_{i,<t})}{\pi_\theta(y_{i,t} \mid x, y_{i,<t})} - \log \frac{\pi_{\text{ref}}(y_{i,t} \mid x, y_{i,<t})}{\pi_\theta(y_{i,t} \mid x, y_{i,<t})} - 1$$
+
+$$
+\mathbb{D}_{\text{KL}, i, t}(\pi_\theta \parallel \pi_{\text{ref}}) = \frac{\pi_{\text{ref}}(y_{i,t} \mid x, y_{i,<t})}{\pi_\theta(y_{i,t} \mid x, y_{i,<t})} - \log \frac{\pi_{\text{ref}}(y_{i,t} \mid x, y_{i,<t})}{\pi_\theta(y_{i,t} \mid x, y_{i,<t})} - 1
+$$
+
    Notice that this estimator satisfies $\mathbb{D}_{\text{KL}, i, t} \ge 0$ with equality iff $\pi_\theta = \pi_{\text{ref}}$, and has lower sample variance than naive log-ratio differences.
 
 6. **The Complete GRPO Loss**:
-   $$\mathcal{L}_{\text{GRPO}}(\theta) = -\frac{1}{G} \sum_{i=1}^G \frac{1}{|y_i|} \sum_{t=1}^{|y_i|} \left[ \text{obj}_{i,t}^{\text{clip}}(\theta) - \beta_{\text{KL}} \mathbb{D}_{\text{KL}, i, t}(\pi_\theta \parallel \pi_{\text{ref}}) \right]$$
+
+$$
+\mathcal{L}_{\text{GRPO}}(\theta) = -\frac{1}{G} \sum_{i=1}^G \frac{1}{|y_i|} \sum_{t=1}^{|y_i|} \left[ \text{obj}_{i,t}^{\text{clip}}(\theta) - \beta_{\text{KL}} \mathbb{D}_{\text{KL}, i, t}(\pi_\theta \parallel \pi_{\text{ref}}) \right]
+$$
 
 ---
 
@@ -3156,22 +3926,35 @@ In GRPO, the training workflow operates iteratively in groups:
 Rather than relying on noisy neural judges during online RL, verifiable rewards use exact programmatic predicates:
 1. **Citation Grounding Reward ($R_{\text{cite}} \in [0, 1]$)**:
    Synthesizes the Milestone 4 Phase 4.2 [`CitationVerifier`](file:///Users/jayesh/Documents/RLHF/evaluation/citation_verifier.py):
-   $$R_{\text{cite}} = \alpha_{\text{prec}} \cdot \text{CitationPrecision} + \alpha_{\text{rec}} \cdot \text{CitationRecall} + \alpha_{\text{faith}} \cdot \text{FaithfulnessScore}$$
+
+$$
+R_{\text{cite}} = \alpha_{\text{prec}} \cdot \text{CitationPrecision} + \alpha_{\text{rec}} \cdot \text{CitationRecall} + \alpha_{\text{faith}} \cdot \text{FaithfulnessScore}
+$$
+
    If a response contains hallucinated citation tags ($[k]$ referencing nonexistent documents), a severe penalty $-0.5$ is applied.
 
 2. **Format Adherence Reward ($R_{\text{format}} \in [0, 1]$)**:
    Verifies reasoning structure:
-   $$R_{\text{format}} = \begin{cases}
-   1.0 & \text{if contains valid matching } \texttt{<think>} \dots \texttt{</think>} \text{ followed by answer} \\
-   0.0 & \text{otherwise}
-   \end{cases}$$
+
+$$
+R_{\text{format}} = \begin{cases}
+  1.0 & \text{if contains valid matching } \texttt{<think>} \dots \texttt{</think>} \text{ followed by answer} \\
+  0.0 & \text{otherwise}
+\end{cases}
+$$
 
 3. **Anti-Verbosity & Brevity Penalty ($R_{\text{len}} \in [-1, 0]$)**:
    Prevents length hacking by penalizing sequences that exceed a target token budget $L_{\text{target}}$:
-   $$R_{\text{len}} = -\lambda_{\text{len}} \cdot \max\left(0, \frac{|y| - L_{\text{target}}}{L_{\text{target}}}\right)$$
+
+$$
+R_{\text{len}} = -\lambda_{\text{len}} \cdot \max\left(0, \frac{|y| - L_{\text{target}}}{L_{\text{target}}}\right)
+$$
 
 4. **Composite Reward Aggregator**:
-   $$R_{\text{total}}(x, y) = w_{\text{cite}} R_{\text{cite}} + w_{\text{format}} R_{\text{format}} + w_{\text{acc}} R_{\text{acc}} + R_{\text{len}}$$
+
+$$
+R_{\text{total}}(x, y) = w_{\text{cite}} R_{\text{cite}} + w_{\text{format}} R_{\text{format}} + w_{\text{acc}} R_{\text{acc}} + R_{\text{len}}
+$$
 
 ---
 
@@ -3280,7 +4063,11 @@ To improve implementation quality, mathematical verification, memory-mapped toke
 
 #### 1. Theoretical Motivation & Foundations
 In supervised fine-tuning (Milestone 3), the model learns an unconditional distribution over demonstrations:
-$$\mathcal{L}_{\text{SFT}}(\theta) = -\sum_{t=1}^T \log \pi_\theta(y_t \mid x, y_{<t})$$
+
+$$
+\mathcal{L}_{\text{SFT}}(\theta) = -\sum_{t=1}^T \log \pi_\theta(y_t \mid x, y_{<t})
+$$
+
 However, standard imitation learning exhibits fundamental shortcomings:
 1. **Inability to Discriminate Degrees of Quality**: SFT treats all demonstration tokens equally, unable to represent that one plausible completion is significantly more accurate, grounded, or concise than another.
 2. **Exposure Bias & Hallucination Drift**: During autoregressive inference, small early compounding errors steer generation into out-of-distribution states that SFT cannot penalize.
@@ -3339,19 +4126,34 @@ flowchart TD
 ##### (A) Probabilistic Choice Model
 Let $x \in \mathcal{X}$ denote an instruction prompt, and let $y_w, y_l \in \mathcal{Y}$ denote the chosen (preferred) and rejected (dispreferred) completions respectively.
 Following the Bradley-Terry-Luce (BTL) model:
-$$P(y_w \succ y_l \mid x) = \sigma(r_\phi(x, y_w) - r_\phi(x, y_l)) = \frac{1}{1 + \exp\left(-(r_\phi(x, y_w) - r_\phi(x, y_l))\right)}$$
+
+$$
+P(y_w \succ y_l \mid x) = \sigma(r_\phi(x, y_w) - r_\phi(x, y_l)) = \frac{1}{1 + \exp\left(-(r_\phi(x, y_w) - r_\phi(x, y_l))\right)}
+$$
 
 ##### (B) Margin-Regularized Bradley-Terry Loss
 To prevent unbounded reward drift and ensure a minimum confidence margin $\gamma \ge 0$, the training loss is formulated as:
-$$\mathcal{L}_{\text{BT}}(\phi) = -\mathbb{E}_{(x, y_w, y_l) \sim \mathcal{D}} \left[ \log \sigma(r_\phi(x, y_w) - r_\phi(x, y_l) - \gamma) \right] + \frac{\lambda_{\text{reg}}}{2} \left( r_\phi(x, y_w)^2 + r_\phi(x, y_l)^2 \right)$$
+
+$$
+\mathcal{L}_{\text{BT}}(\phi) = -\mathbb{E}_{(x, y_w, y_l) \sim \mathcal{D}} \left[ \log \sigma(r_\phi(x, y_w) - r_\phi(x, y_l) - \gamma) \right] + \frac{\lambda_{\text{reg}}}{2} \left( r_\phi(x, y_w)^2 + r_\phi(x, y_l)^2 \right)
+$$
 
 Using the identity $\log \sigma(z) = -\log(1 + e^{-z}) = -\text{softplus}(-z)$, the loss is computed with full numerical stability (avoiding underflow for large positive $z$ and overflow for negative $z$):
-$$\mathcal{L}_{\text{BT}}(\phi) = \text{softplus}(-(r_\phi(x, y_w) - r_\phi(x, y_l) - \gamma)) + \frac{\lambda_{\text{reg}}}{2} \left( r_\phi(x, y_w)^2 + r_\phi(x, y_l)^2 \right)$$
+
+$$
+\mathcal{L}_{\text{BT}}(\phi) = \text{softplus}(-(r_\phi(x, y_w) - r_\phi(x, y_l) - \gamma)) + \frac{\lambda_{\text{reg}}}{2} \left( r_\phi(x, y_w)^2 + r_\phi(x, y_l)^2 \right)
+$$
 
 ##### (C) Gradient Analysis
 The gradient of $\mathcal{L}_{\text{BT}}$ with respect to the scalar rewards is:
-$$\frac{\partial \mathcal{L}_{\text{BT}}}{\partial r_\phi(x, y_w)} = -\sigma(r_\phi(x, y_l) - r_\phi(x, y_w) + \gamma) + \lambda_{\text{reg}} r_\phi(x, y_w)$$
-$$\frac{\partial \mathcal{L}_{\text{BT}}}{\partial r_\phi(x, y_l)} = +\sigma(r_\phi(x, y_l) - r_\phi(x, y_w) + \gamma) + \lambda_{\text{reg}} r_\phi(x, y_l)$$
+
+$$
+\frac{\partial \mathcal{L}_{\text{BT}}}{\partial r_\phi(x, y_w)} = -\sigma(r_\phi(x, y_l) - r_\phi(x, y_w) + \gamma) + \lambda_{\text{reg}} r_\phi(x, y_w)
+$$
+
+$$
+\frac{\partial \mathcal{L}_{\text{BT}}}{\partial r_\phi(x, y_l)} = +\sigma(r_\phi(x, y_l) - r_\phi(x, y_w) + \gamma) + \lambda_{\text{reg}} r_\phi(x, y_l)
+$$
 
 Let the classification error be $e = \sigma(r_\phi(x, y_l) - r_\phi(x, y_w) + \gamma) \in (0, 1)$:
 - When the model severely errs ($r_\phi(x, y_w) \ll r_\phi(x, y_l)$), $e \to 1.0$, pushing chosen reward up and rejected reward down with maximum gradient.
@@ -3360,12 +4162,23 @@ Let the classification error be $e = \sigma(r_\phi(x, y_l) - r_\phi(x, y_w) + \g
 ##### (D) Sequence Pooling & Reward Head
 Given input token indices $s \in \mathbb{Z}^{B \times T}$ representing the full ChatML conversation $x \circ y$:
 1. Pass $s$ through the transformer backbone:
-   $$H = \text{MiniGPT}(s) \in \mathbb{R}^{B \times T \times d_{\text{model}}}$$
+
+$$
+H = \text{MiniGPT}(s) \in \mathbb{R}^{B \times T \times d_{\text{model}}}
+$$
+
 2. For each sequence $b \in \{1, \dots, B\}$, determine the index of the final non-padding token:
-   $$t_b^* = \max(\{t \in \{1, \dots, T\} : \text{mask}_{b, t} = 1\})$$
+
+$$
+t_b^* = \max(\{t \in \{1, \dots, T\} : \text{mask}_{b, t} = 1\})
+$$
+
 3. Extract the pooled hidden state $h_b^* = H_{b, t_b^*} \in \mathbb{R}^{d_{\text{model}}}$.
 4. Project via the linear reward head without bias:
-   $$r_b = W_r^T h_b^* \in \mathbb{R}, \quad W_r \in \mathbb{R}^{d_{\text{model}} \times 1}$$
+
+$$
+r_b = W_r^T h_b^* \in \mathbb{R}, \quad W_r \in \mathbb{R}^{d_{\text{model}} \times 1}
+$$
 
 ---
 
@@ -3492,41 +4305,86 @@ flowchart TD
 
 ##### 1.1 The Classical RLHF Optimization Problem
 In standard RLHF, given prompt distribution $\mathcal{D}$, reward function $r(x, y)$, and reference policy $\pi_{\text{ref}}$, the policy optimization objective is:
-$$\max_{\pi_\theta} \mathbb{E}_{x \sim \mathcal{D}, y \sim \pi_\theta(y|x)} \left[ r(x, y) \right] - \beta \mathbb{D}_{\text{KL}}\left(\pi_\theta(y|x) \parallel \pi_{\text{ref}}(y|x)\right)$$
+
+$$
+\max_{\pi_\theta} \mathbb{E}_{x \sim \mathcal{D}, y \sim \pi_\theta(y|x)} \left[ r(x, y) \right] - \beta \mathbb{D}_{\text{KL}}\left(\pi_\theta(y|x) \parallel \pi_{\text{ref}}(y|x)\right)
+$$
+
 where $\beta > 0$ controls the strength of the KL regularization penalty that prevents policy collapse and mode drift.
 
 ##### 1.2 Closed-Form Optimal Policy Solution
 Using calculus of variations with Lagrange multipliers under the probability simplex constraint $\sum_y \pi(y|x) = 1$, the exact unnormalized solution satisfies:
-$$\pi^*(y|x) \propto \pi_{\text{ref}}(y|x) \exp\left( \frac{1}{\beta} r(x, y) \right)$$
+
+$$
+\pi^*(y|x) \propto \pi_{\text{ref}}(y|x) \exp\left( \frac{1}{\beta} r(x, y) \right)
+$$
+
 Normalizing by the partition function $Z(x) = \sum_y \pi_{\text{ref}}(y|x) \exp\left( \frac{1}{\beta} r(x, y) \right)$:
-$$\pi^*(y|x) = \frac{1}{Z(x)} \pi_{\text{ref}}(y|x) \exp\left( \frac{1}{\beta} r(x, y) \right)$$
+
+$$
+\pi^*(y|x) = \frac{1}{Z(x)} \pi_{\text{ref}}(y|x) \exp\left( \frac{1}{\beta} r(x, y) \right)
+$$
 
 ##### 1.3 Derivation of Implicit Reward Function
 Taking the natural logarithm of both sides:
-$$\log \pi^*(y|x) = \log \pi_{\text{ref}}(y|x) + \frac{1}{\beta} r(x, y) - \log Z(x)$$
+
+$$
+\log \pi^*(y|x) = \log \pi_{\text{ref}}(y|x) + \frac{1}{\beta} r(x, y) - \log Z(x)
+$$
+
 Rearranging for $r(x, y)$:
-$$r(x, y) = \beta \log \left(\frac{\pi^*(y|x)}{\pi_{\text{ref}}(y|x)}\right) + \beta \log Z(x)$$
+
+$$
+r(x, y) = \beta \log \left(\frac{\pi^*(y|x)}{\pi_{\text{ref}}(y|x)}\right) + \beta \log Z(x)
+$$
+
 This fundamental theorem reveals that **any policy $\pi$ implicitly defines a reward function**:
-$$\hat{r}(x, y) = \beta \log \left(\frac{\pi(y|x)}{\pi_{\text{ref}}(y|x)}\right)$$
+
+$$
+\hat{r}(x, y) = \beta \log \left(\frac{\pi(y|x)}{\pi_{\text{ref}}(y|x)}\right)
+$$
+
 up to a prompt-dependent baseline $\beta \log Z(x)$.
 
 ##### 1.4 Substitution into Bradley-Terry Preference Probability
 Recall the Bradley-Terry preference probability for prompt $x$ and completion pair $(y_w, y_l)$:
-$$p^*(y_w \succ y_l \mid x) = \sigma\left(r^*(x, y_w) - r^*(x, y_l)\right)$$
+
+$$
+p^*(y_w \succ y_l \mid x) = \sigma\left(r^*(x, y_w) - r^*(x, y_l)\right)
+$$
+
 Substituting the analytical expression for $r(x, y)$:
-$$r^*(x, y_w) - r^*(x, y_l) = \left( \beta \log \frac{\pi^*(y_w|x)}{\pi_{\text{ref}}(y_w|x)} + \beta \log Z(x) \right) - \left( \beta \log \frac{\pi^*(y_l|x)}{\pi_{\text{ref}}(y_l|x)} + \beta \log Z(x) \right)$$
+
+$$
+r^*(x, y_w) - r^*(x, y_l) = \left( \beta \log \frac{\pi^*(y_w|x)}{\pi_{\text{ref}}(y_w|x)} + \beta \log Z(x) \right) - \left( \beta \log \frac{\pi^*(y_l|x)}{\pi_{\text{ref}}(y_l|x)} + \beta \log Z(x) \right)
+$$
+
 Notice that the intractable partition function $\beta \log Z(x)$ **cancels out completely**:
-$$r^*(x, y_w) - r^*(x, y_l) = \beta \left( \log \frac{\pi^*(y_w|x)}{\pi_{\text{ref}}(y_w|x)} - \log \frac{\pi^*(y_l|x)}{\pi_{\text{ref}}(y_l|x)} \right)$$
+
+$$
+r^*(x, y_w) - r^*(x, y_l) = \beta \left( \log \frac{\pi^*(y_w|x)}{\pi_{\text{ref}}(y_w|x)} - \log \frac{\pi^*(y_l|x)}{\pi_{\text{ref}}(y_l|x)} \right)
+$$
+
 Therefore:
-$$p_\theta(y_w \succ y_l \mid x) = \sigma \left( \beta \log \frac{\pi_\theta(y_w|x)}{\pi_{\text{ref}}(y_w|x)} - \beta \log \frac{\pi_\theta(y_l|x)}{\pi_{\text{ref}}(y_l|x)} \right)$$
+
+$$
+p_\theta(y_w \succ y_l \mid x) = \sigma \left( \beta \log \frac{\pi_\theta(y_w|x)}{\pi_{\text{ref}}(y_w|x)} - \beta \log \frac{\pi_\theta(y_l|x)}{\pi_{\text{ref}}(y_l|x)} \right)
+$$
 
 ##### 1.5 The DPO Objective Function
 We formulate policy optimization as maximum likelihood estimation on preference dataset $\mathcal{D}$:
-$$\mathcal{L}_{\text{DPO}}(\theta; \pi_{\text{ref}}) = - \mathbb{E}_{(x, y_w, y_l) \sim \mathcal{D}} \left[ \log \sigma \left( \beta \log \frac{\pi_\theta(y_w|x)}{\pi_{\text{ref}}(y_w|x)} - \beta \log \frac{\pi_\theta(y_l|x)}{\pi_{\text{ref}}(y_l|x)} \right) \right]$$
+
+$$
+\mathcal{L}_{\text{DPO}}(\theta; \pi_{\text{ref}}) = - \mathbb{E}_{(x, y_w, y_l) \sim \mathcal{D}} \left[ \log \sigma \left( \beta \log \frac{\pi_\theta(y_w|x)}{\pi_{\text{ref}}(y_w|x)} - \beta \log \frac{\pi_\theta(y_l|x)}{\pi_{\text{ref}}(y_l|x)} \right) \right]
+$$
 
 ##### 1.6 Gradient Dynamics & Self-Regularizing Weights
 Differentiating the loss with respect to parameters $\theta$:
-$$\nabla_\theta \mathcal{L}_{\text{DPO}}(\theta) = - \beta \mathbb{E}_{(x, y_w, y_l)} \left[ \sigma\left(\hat{r}_\theta(x, y_l) - \hat{r}_\theta(x, y_w)\right) \cdot \left( \nabla_\theta \log \pi_\theta(y_w|x) - \nabla_\theta \log \pi_\theta(y_l|x) \right) \right]$$
+
+$$
+\nabla_\theta \mathcal{L}_{\text{DPO}}(\theta) = - \beta \mathbb{E}_{(x, y_w, y_l)} \left[ \sigma\left(\hat{r}_\theta(x, y_l) - \hat{r}_\theta(x, y_w)\right) \cdot \left( \nabla_\theta \log \pi_\theta(y_w|x) - \nabla_\theta \log \pi_\theta(y_l|x) \right) \right]
+$$
+
 where $\hat{r}_\theta(x, y) = \beta \log \frac{\pi_\theta(y|x)}{\pi_{\text{ref}}(y|x)}$.
 Notice the scalar weight $w(x, y_w, y_l) = \sigma(\hat{r}_\theta(x, y_l) - \hat{r}_\theta(x, y_w))$:
 - If the current model incorrectly ranks the rejected completion higher than the chosen completion ($\hat{r}_\theta(x, y_l) > \hat{r}_\theta(x, y_w)$), the gradient weight approaches $1.0$, providing maximum corrective pressure.
@@ -3535,20 +4393,34 @@ Notice the scalar weight $w(x, y_w, y_l) = \sigma(\hat{r}_\theta(x, y_l) - \hat{
 ##### 1.7 Variants & Regularization Extensions
 1. **Conservative DPO (cDPO / Label Smoothing)**:
    In human preference annotations, annotator disagreement rates are typically 20-30%. Assuming a label corruption probability $\epsilon \in [0, 0.5)$:
-   $$\mathcal{L}_{\text{cDPO}} = - (1 - \epsilon) \log \sigma(\beta \Delta) - \epsilon \log \sigma(-\beta \Delta)$$
+
+$$
+\mathcal{L}_{\text{cDPO}} = - (1 - \epsilon) \log \sigma(\beta \Delta) - \epsilon \log \sigma(-\beta \Delta)
+$$
+
    where $\Delta = \log \frac{\pi_\theta(y_w|x)}{\pi_{\text{ref}}(y_w|x)} - \log \frac{\pi_\theta(y_l|x)}{\pi_{\text{ref}}(y_l|x)}$.
 2. **Identity Preference Optimization (IPO)** (Azar et al., 2024):
    Adds a quadratic penalty to regularize against unbounded log-ratio growth:
-   $$\mathcal{L}_{\text{IPO}} = \left( \beta \Delta - \frac{1}{2\beta} \right)^2$$
+
+$$
+\mathcal{L}_{\text{IPO}} = \left( \Delta - \frac{1}{2\beta} \right)^2
+$$
+
 3. **Length Normalization (SimPO style)** (Meng et al., 2024):
    Normalizes the total sequence log-probabilities by the number of completion tokens $|y|$ to eliminate verbosity bias:
-   $$\overline{\log \pi}(y|x) = \frac{1}{|y|} \sum_{t=1}^{|y|} \log \pi(y_t \mid x, y_{<t})$$
+
+$$
+\overline{\log \pi}(y|x) = \frac{1}{|y|} \sum_{t=1}^{|y|} \log \pi(y_t \mid x, y_{<t})
+$$
 
 ---
 
 #### 2. Sequence Token Log-Probability Extraction Pipeline
 In causal autoregressive decoders, the sequence log-probability $\log \pi(y \mid x)$ is the sum of per-token log-probabilities exclusively over completion positions:
-$$\log \pi(y \mid x) = \sum_{t = |x| + 1}^{|x| + |y|} \log P(x_t \mid x_{<t}) = \sum_{t = |x| + 1}^{|x| + |y|} \left[ \log \text{softmax}(z_{t-1})_{x_t} \right]$$
+
+$$
+\log \pi(y \mid x) = \sum_{t = |x| + 1}^{|x| + |y|} \log P(x_t \mid x_{<t}) = \sum_{t = |x| + 1}^{|x| + |y|} \left[ \log \text{softmax}(z_{t-1})_{x_t} \right]
+$$
 
 ```mermaid
 sequenceDiagram
@@ -3661,48 +4533,95 @@ flowchart TD
 ##### 1.1 The Autoregressive LLM Markov Decision Process (MDP)
 We formulate generative text completion as an episodic Markov Decision Process $\langle \mathcal{S}, \mathcal{A}, \mathcal{P}, \mathcal{R}, \gamma \rangle$:
 - **State $s_t$**: The prompt $x$ concatenated with all previously generated tokens $y_{<t}$:
-  $$s_t = (x_1, \dots, x_{|x|}, y_1, \dots, y_{t-1})$$
+
+$$
+s_t = (x_1, \dots, x_{|x|}, y_1, \dots, y_{t-1})
+$$
+
 - **Action $a_t$**: The discrete token $y_t \in \mathcal{V}$ sampled from the policy distribution $\pi_\theta(a_t \mid s_t)$.
 - **Transition Dynamics $\mathcal{P}(s_{t+1} \mid s_t, a_t)$**: Deterministic string concatenation: $s_{t+1} = (s_t, a_t)$.
 - **Reward Function $\mathcal{R}(s_t, a_t)$**:
   To prevent the policy from degenerating into gibberish or exploiting the reward model ("reward hacking"), a per-token KL divergence penalty is applied relative to the reference policy $\pi_{\text{ref}}$ (Ziegler et al., 2019; Ouyang et al., 2022):
-  $$r_t = \begin{cases} -\beta \left( \log \pi_\theta(a_t \mid s_t) - \log \pi_{\text{ref}}(a_t \mid s_t) \right) & \text{if } t < T \\ R(x, y) - \beta \left( \log \pi_\theta(a_T \mid s_T) - \log \pi_{\text{ref}}(a_T \mid s_T) \right) & \text{if } t = T \end{cases}$$
+
+$$
+r_t = \begin{cases}
+  -\beta \left( \log \pi_\theta(a_t \mid s_t) - \log \pi_{\text{ref}}(a_t \mid s_t) \right) & \text{if } t < T \\
+  R(x, y) - \beta \left( \log \pi_\theta(a_T \mid s_T) - \log \pi_{\text{ref}}(a_T \mid s_T) \right) & \text{if } t = T
+\end{cases}
+$$
+
   where $R(x, y)$ is the scalar score from the trained Reward Model (or verifier), and $\beta > 0$ is the KL penalty multiplier.
 
 ##### 1.2 Generalized Advantage Estimation (GAE-$\lambda$)
 Credit assignment across multi-token completions is computed using Generalized Advantage Estimation (Schulman et al., ICLR 2016).
 Define the temporal difference (TD) residual at step $t \in [1, T]$:
-$$\delta_t^V = r_t + \gamma V_\phi(s_{t+1}) - V_\phi(s_t)$$
+
+$$
+\delta_t^V = r_t + \gamma V_\phi(s_{t+1}) - V_\phi(s_t)
+$$
+
 where $V_\phi(s_{T+1}) \equiv 0$ for terminal states.
 
 The GAE-$\lambda$ advantage estimator is the exponentially weighted average of $k$-step advantages:
-$$\hat{A}_t^{\text{GAE}(\gamma, \lambda)} = \sum_{l=0}^{T - t} (\gamma \lambda)^l \delta_{t+l}^V$$
+
+$$
+\hat{A}_t^{\text{GAE}(\gamma, \lambda)} = \sum_{l=0}^{T - t} (\gamma \lambda)^l \delta_{t+l}^V
+$$
+
 In practice, this is computed backward from $t = T$ down to $1$ via the recursive relation:
-$$\hat{A}_t = \delta_t^V + (\gamma \lambda) \hat{A}_{t+1}$$
+
+$$
+\hat{A}_t = \delta_t^V + (\gamma \lambda) \hat{A}_{t+1}
+$$
+
 Target returns for training the Critic network are:
-$$\hat{R}_t = \hat{A}_t + V_\phi(s_t)$$
+
+$$
+\hat{R}_t = \hat{A}_t + V_\phi(s_t)
+$$
 
 ##### 1.3 Advantage Normalization Invariant
 To stabilize optimization across varying prompt complexities and completions of different lengths, advantages are normalized across active token positions in the mini-batch:
-$$\hat{A}_t^{\text{norm}} = \frac{\hat{A}_t - \mu_{\hat{A}}}{\sigma_{\hat{A}} + 10^{-8}}$$
+
+$$
+\hat{A}_t^{\text{norm}} = \frac{\hat{A}_t - \mu_{\hat{A}}}{\sigma_{\hat{A}} + 10^{-8}}
+$$
 
 ##### 1.4 Clipped Surrogate Policy Objective ($L^{\text{CLIP}}$)
 To prevent destructive policy updates that move too far from the data generation distribution $\pi_{\text{old}}$, PPO clips the probability ratio:
-$$r_t(\theta) = \frac{\pi_\theta(a_t \mid s_t)}{\pi_{\text{old}}(a_t \mid s_t)} = \exp\left( \log \pi_\theta(a_t \mid s_t) - \log \pi_{\text{old}}(a_t \mid s_t) \right)$$
+
+$$
+r_t(\theta) = \frac{\pi_\theta(a_t \mid s_t)}{\pi_{\text{old}}(a_t \mid s_t)} = \exp\left( \log \pi_\theta(a_t \mid s_t) - \log \pi_{\text{old}}(a_t \mid s_t) \right)
+$$
+
 The clipped surrogate objective is:
-$$L^{\text{CLIP}}(\theta) = \hat{\mathbb{E}}_t \left[ \min\left( r_t(\theta) \hat{A}_t^{\text{norm}}, \text{clip}\left( r_t(\theta), 1 - \epsilon, 1 + \epsilon \right) \hat{A}_t^{\text{norm}} \right) \right]$$
+
+$$
+L^{\text{CLIP}}(\theta) = \hat{\mathbb{E}}_t \left[ \min\left( r_t(\theta) \hat{A}_t^{\text{norm}}, \text{clip}\left( r_t(\theta), 1 - \epsilon, 1 + \epsilon \right) \hat{A}_t^{\text{norm}} \right) \right]
+$$
+
 where $\epsilon \in (0, 0.3)$ is the clipping threshold (typically $0.2$).
 The $\min$ operator takes the pessimistic lower bound, ensuring that if an action has positive advantage ($\hat{A}_t > 0$), the ratio cannot increase past $1 + \epsilon$; if it has negative advantage ($\hat{A}_t < 0$), the ratio cannot decrease below $1 - \epsilon$.
 
 ##### 1.5 Value Function Loss with Clipping ($L^{\text{VF}}$)
 Similarly, the value function $V_\phi$ is updated with squared error, optionally clipped to prevent large critic shifts (Engstrom et al., 2020):
-$$L^{\text{VF}}(\phi) = \frac{1}{2} \hat{\mathbb{E}}_t \left[ \max\left( \left(V_\phi(s_t) - \hat{R}_t\right)^2, \left(V_{\text{old}}(s_t) + \text{clip}\left(V_\phi(s_t) - V_{\text{old}}(s_t), -\epsilon_v, \epsilon_v\right) - \hat{R}_t\right)^2 \right) \right]$$
+
+$$
+L^{\text{VF}}(\phi) = \frac{1}{2} \hat{\mathbb{E}}_t \left[ \max\left( \left(V_\phi(s_t) - \hat{R}_t\right)^2, \left(V_{\text{old}}(s_t) + \text{clip}\left(V_\phi(s_t) - V_{\text{old}}(s_t), -\epsilon_v, \epsilon_v\right) - \hat{R}_t\right)^2 \right) \right]
+$$
 
 ##### 1.6 Policy Entropy Regularization
 To encourage exploration and prevent premature convergence of policy attention heads, an entropy bonus is added:
-$$S[\pi_\theta](s_t) = - \sum_{a \in \mathcal{V}} \pi_\theta(a \mid s_t) \log \pi_\theta(a \mid s_t)$$
+
+$$
+S[\pi_\theta](s_t) = - \sum_{a \in \mathcal{V}} \pi_\theta(a \mid s_t) \log \pi_\theta(a \mid s_t)
+$$
+
 Total composite PPO loss minimized by gradient descent:
-$$L^{\text{PPO}}(\theta, \phi) = - L^{\text{CLIP}}(\theta) + c_1 L^{\text{VF}}(\phi) - c_2 \hat{\mathbb{E}}_t\left[ S[\pi_\theta](s_t) \right]$$
+
+$$
+L^{\text{PPO}}(\theta, \phi) = - L^{\text{CLIP}}(\theta) + c_1 L^{\text{VF}}(\phi) - c_2 \hat{\mathbb{E}}_t\left[ S[\pi_\theta](s_t) \right]
+$$
 
 ---
 
@@ -3809,13 +4728,23 @@ In standard PPO (Phase 5.3):
 
 ##### 1.2 Group-Relative Advantage Estimation
 Instead of learning a parametric state-value baseline $V_\phi(s_t)$, GRPO samples a **group of $G$ candidate outputs** $\{o_1, o_2, \dots, o_G\}$ for each question $q$ from the behavior policy $\pi_{\theta_{\text{old}}}$:
-$$\{o_1, o_2, \dots, o_G\} \sim \pi_{\theta_{\text{old}}}(\cdot \mid q)$$
+
+$$
+\{o_1, o_2, \dots, o_G\} \sim \pi_{\theta_{\text{old}}}(\cdot \mid q)
+$$
 
 Each candidate $o_i$ receives a sequence-level reward $R_i$. The baseline is computed directly from the empirical mean and standard deviation of the group:
-$$\bar{R} = \frac{1}{G} \sum_{i=1}^G R_i, \quad \sigma_R = \sqrt{\frac{1}{G} \sum_{i=1}^G (R_i - \bar{R})^2}$$
+
+$$
+\bar{R} = \frac{1}{G} \sum_{i=1}^G R_i, \quad \sigma_R = \sqrt{\frac{1}{G} \sum_{i=1}^G (R_i - \bar{R})^2}
+$$
 
 The **Group-Relative Advantage** $\hat{A}_i$ for candidate $o_i$ is defined as:
-$$\hat{A}_i = \frac{R_i - \bar{R}}{\sigma_R + 10^{-8}}$$
+
+$$
+\hat{A}_i = \frac{R_i - \bar{R}}{\sigma_R + 10^{-8}}
+$$
+
 Properties:
 - **Zero-Sum Group Baseline**: $\sum_{i=1}^G \hat{A}_i = 0$.
 - **Self-Balancing**: If all completions in a group achieve identical reward (e.g. all correct or all incorrect), $\sigma_R \to 0 \implies \hat{A}_i = 0$, producing zero gradient updates and preventing noise amplification.
@@ -3823,29 +4752,64 @@ Properties:
 
 ##### 1.3 The GRPO Objective Function
 The clipped surrogate objective for GRPO across prompt distribution $\mathcal{D}$ is:
-$$\mathcal{J}_{\text{GRPO}}(\theta) = \mathbb{E}_{q \sim \mathcal{D}, \{o_i\}_{i=1}^G \sim \pi_{\theta_{\text{old}}}(q)} \left[ \frac{1}{G} \sum_{i=1}^G \frac{1}{|o_i|} \sum_{t=1}^{|o_i|} \left( \min\left( \rho_{i,t}(\theta) \hat{A}_i, \text{clip}\left(\rho_{i,t}(\theta), 1 - \epsilon, 1 + \epsilon \right) \hat{A}_i \right) - \beta \mathbb{D}_{\text{KL}}\left(\pi_\theta \parallel \pi_{\text{ref}}\right) \right) \right]$$
+
+$$
+\mathcal{J}_{\text{GRPO}}(\theta) = \mathbb{E}_{q \sim \mathcal{D}, \{o_i\}_{i=1}^G \sim \pi_{\theta_{\text{old}}}(q)} \left[ \frac{1}{G} \sum_{i=1}^G \frac{1}{|o_i|} \sum_{t=1}^{|o_i|} \left( \min\left( \rho_{i,t}(\theta) \hat{A}_i, \text{clip}\left(\rho_{i,t}(\theta), 1 - \epsilon, 1 + \epsilon \right) \hat{A}_i \right) - \beta \mathbb{D}_{\text{KL}}\left(\pi_\theta \parallel \pi_{\text{ref}}\right) \right) \right]
+$$
+
 where the probability ratio is:
-$$\rho_{i,t}(\theta) = \frac{\pi_\theta(o_{i,t} \mid q, o_{i,<t})}{\pi_{\theta_{\text{old}}}(o_{i,t} \mid q, o_{i,<t})}$$
+
+$$
+\rho_{i,t}(\theta) = \frac{\pi_\theta(o_{i,t} \mid q, o_{i,<t})}{\pi_{\theta_{\text{old}}}(o_{i,t} \mid q, o_{i,<t})}
+$$
 
 ##### 1.4 Unbiased Non-Negative KL Divergence Estimator
 To prevent policy drift away from the reference policy $\pi_{\text{ref}}$, DeepSeek-R1 employs the unbiased non-negative KL estimator (Schulman, 2020):
-$$\mathbb{D}_{\text{KL}}\left(\pi_\theta \parallel \pi_{\text{ref}}\right) = \frac{\pi_{\text{ref}}(o_{i,t} \mid q, o_{i,<t})}{\pi_\theta(o_{i,t} \mid q, o_{i,<t})} - \log \frac{\pi_{\text{ref}}(o_{i,t} \mid q, o_{i,<t})}{\pi_\theta(o_{i,t} \mid q, o_{i,<t})} - 1$$
+
+$$
+\mathbb{D}_{\text{KL}}\left(\pi_\theta \parallel \pi_{\text{ref}}\right) = \frac{\pi_{\text{ref}}(o_{i,t} \mid q, o_{i,<t})}{\pi_\theta(o_{i,t} \mid q, o_{i,<t})} - \log \frac{\pi_{\text{ref}}(o_{i,t} \mid q, o_{i,<t})}{\pi_\theta(o_{i,t} \mid q, o_{i,<t})} - 1
+$$
+
 Let $u = \frac{\pi_{\text{ref}}}{\pi_\theta} = \exp(\log \pi_{\text{ref}} - \log \pi_\theta)$.
 Then:
-$$\mathbb{D}_{\text{KL}} = u - \log u - 1$$
+
+$$
+\mathbb{D}_{\text{KL}} = u - \log u - 1
+$$
+
 By convex analysis, $u - \log u - 1 \ge 0$ for all $u > 0$, with equality if and only if $u = 1$ ($\pi_\theta = \pi_{\text{ref}}$). This eliminates the negative KL anomalies common with naive log-ratio approximations.
 
 ##### 1.5 Rule-Based Verifiable Rewards
 DeepSeek-R1 demonstrated that reasoning capabilities (math, code, logic) emerge most cleanly when neural reward models (which are vulnerable to reward hacking) are replaced with **verifiable rule-based reward functions**:
 1. **Format Reward ($R_{\text{format}}$)**:
    Enforces structural reasoning tags:
-   $$\text{Format: } \langle\text{think}\rangle \dots \langle/\text{think}\rangle \langle\text{answer}\rangle \dots \langle/\text{answer}\rangle$$
-   $$R_{\text{format}} = \begin{cases} 1.0 & \text{if both tags exist and are non-empty and well-ordered} \\ 0.0 & \text{otherwise} \end{cases}$$
+
+$$
+\text{Format: } \langle\text{think}\rangle \dots \langle/\text{think}\rangle \langle\text{answer}\rangle \dots \langle/\text{answer}\rangle
+$$
+
+$$
+R_{\text{format}} = \begin{cases}
+  1.0 & \text{if both tags exist and are non-empty and well-ordered} \\
+  0.0 & \text{otherwise}
+\end{cases}
+$$
+
 2. **Accuracy Reward ($R_{\text{acc}}$)**:
    Extracts candidate answer $a_{\text{pred}}$ from within $\langle\text{answer}\rangle \dots \langle/\text{answer}\rangle$ or $\text{\boxed{\dots}}$ and compares against ground truth $a^*$:
-   $$R_{\text{acc}} = \begin{cases} 1.0 & \text{if } \text{normalize}(a_{\text{pred}}) == \text{normalize}(a^*) \\ 0.0 & \text{otherwise} \end{cases}$$
+
+$$
+R_{\text{acc}} = \begin{cases}
+  1.0 & \text{if } \text{normalize}(a_{\text{pred}}) == \text{normalize}(a^*) \\
+  0.0 & \text{otherwise}
+\end{cases}
+$$
+
 3. **Composite Verifiable Reward**:
-   $$R_i = w_{\text{format}} \cdot R_{\text{format}} + w_{\text{acc}} \cdot R_{\text{acc}}$$
+
+$$
+R_i = w_{\text{format}} \cdot R_{\text{format}} + w_{\text{acc}} \cdot R_{\text{acc}}
+$$
 
 ---
 
@@ -3934,7 +4898,11 @@ flowchart TD
 ##### 1.1 Multi-Paradigm Alignment Evaluation Metrics
 To rigorously evaluate candidate models aligned via different paradigms against the base model:
 1. **Pairwise Win Rate ($W$)**: Evaluated via M4 LLM Judge across paired presentations:
-   $$W = \frac{N_{\text{wins}} + 0.5 \cdot N_{\text{ties}}}{N_{\text{total}}}$$
+
+$$
+W = \frac{N_{\text{wins}} + 0.5 \cdot N_{\text{ties}}}{N_{\text{total}}}
+$$
+
 2. **Format Compliance Rate ($C_{\text{format}}$)**: Fraction of responses strictly complying with XML reasoning tags (`<think>...</think><answer>...</answer>`).
 3. **Verifiable Accuracy Rate ($A_{\text{verif}}$)**: Fraction of reasoning answers matching ground truth.
 4. **Policy Divergence ($\mathbb{D}_{\text{KL}}$)**: Empirical KL divergence from the reference anchor, preventing catastrophic forgetting of base pretraining knowledge.
@@ -4039,21 +5007,43 @@ flowchart TD
 
 ##### 1.1 The Mathematics of Continual Learning & Catastrophic Forgetting
 When an autoregressive model $\theta$ is fine-tuned sequentially on a non-stationary stream of new data $\mathcal{D}_{\text{new}}$, standard gradient descent minimizes empirical risk strictly on $\mathcal{D}_{\text{new}}$, inducing catastrophic forgetting of earlier capabilities (McCloskey & Cohen, 1989; French, 1999):
-$$\theta_{k+1} = \arg\min_\theta \mathcal{L}(\theta; \mathcal{D}_{\text{new}})$$
+
+$$
+\theta_{k+1} = \arg\min_\theta \mathcal{L}(\theta; \mathcal{D}_{\text{new}})
+$$
 
 To prevent catastrophic forgetting and **model collapse** (Shumailov et al., Nature 2024), we formulate post-training as **Experience Replay optimization** (Robins, 1995; Rolnick et al., 2019):
-$$\mathcal{L}_{\text{continual}}(\theta) = (1 - \alpha) \mathbb{E}_{(x, y) \sim \mathcal{D}_{\text{anchor}}} [\mathcal{L}(\theta; x, y)] + \alpha \mathbb{E}_{(x, y) \sim \mathcal{D}_{\text{web}}} [\mathcal{L}(\theta; x, y)]$$
+
+$$
+\mathcal{L}_{\text{continual}}(\theta) = (1 - \alpha) \mathbb{E}_{(x, y) \sim \mathcal{D}_{\text{anchor}}} [\mathcal{L}(\theta; x, y)] + \alpha \mathbb{E}_{(x, y) \sim \mathcal{D}_{\text{web}}} [\mathcal{L}(\theta; x, y)]
+$$
+
 where $\alpha = 0.30$ maintains a strict **70% Golden Anchor / 30% Fresh Stream** mixture ratio, mathematically bounding knowledge drift:
-$$\mathbb{D}_{\text{KL}}\left(\pi_{\theta_{k+1}} \parallel \pi_{\theta_{\text{anchor}}}\right) \le \epsilon_{\text{drift}}$$
+
+$$
+\mathbb{D}_{\text{KL}}\left(\pi_{\theta_{k+1}} \parallel \pi_{\theta_{\text{anchor}}}\right) \le \epsilon_{\text{drift}}
+$$
 
 ##### 1.2 Hybrid Retrieval Mathematics: Sparse BM25 + Dense Semantic Fusion
 Given user query $q$ and corpus document pool $\mathcal{D} = \{d_1, \dots, d_N\}$:
 1. **Sparse Lexical Score (Okapi BM25)**:
-   $$\text{BM25}(q, d) = \sum_{t \in q} \text{IDF}(t) \cdot \frac{f(t, d) \cdot (k_1 + 1)}{f(t, d) + k_1 \cdot \left(1 - b + b \cdot \frac{|d|}{\text{avgdl}}\right)}$$
+
+$$
+\text{BM25}(q, d) = \sum_{t \in q} \text{IDF}(t) \cdot \frac{f(t, d) \cdot (k_1 + 1)}{f(t, d) + k_1 \cdot \left(1 - b + b \cdot \frac{|d|}{\text{avgdl}}\right)}
+$$
+
 2. **Dense Semantic Cosine Similarity**:
-   $$\text{Dense}(q, d) = \frac{\mathbf{e}_q^\top \mathbf{e}_d}{\|\mathbf{e}_q\| \|\mathbf{e}_d\|}$$
+
+$$
+\text{Dense}(q, d) = \frac{\mathbf{e}_q^\top \mathbf{e}_d}{\|\mathbf{e}_q\| \|\mathbf{e}_d\|}
+$$
+
 3. **Reciprocal Rank Fusion (RRF)** (Cormack et al., SIGIR 2009):
-   $$\text{RRF}(d) = \frac{1}{k + \text{rank}_{\text{BM25}}(d)} + \frac{1}{k + \text{rank}_{\text{Dense}}(d)}, \quad k = 60$$
+
+$$
+\text{RRF}(d) = \frac{1}{k + \text{rank}_{\text{BM25}}(d)} + \frac{1}{k + \text{rank}_{\text{Dense}}(d)}, \quad k = 60
+$$
+
    RRF ensures scale-invariance and robustness against outliers across score distributions.
 
 ##### 1.3 Zero-Downtime Atomic Hot-Swap Protocol
@@ -4117,7 +5107,11 @@ flowchart TD
 
 ##### 1.1 Sparse Lexical Retrieval: Okapi BM25
 The Okapi BM25 algorithm (Robertson et al., 1994, 2009) scores relevance based on term frequency saturation and document length normalization:
-$$\text{BM25}(q, d) = \sum_{t \in q} \text{IDF}(t) \cdot \frac{f(t, d) \cdot (k_1 + 1)}{f(t, d) + k_1 \cdot \left(1 - b + b \cdot \frac{|d|}{\text{avgdl}}\right)}$$
+
+$$
+\text{BM25}(q, d) = \sum_{t \in q} \text{IDF}(t) \cdot \frac{f(t, d) \cdot (k_1 + 1)}{f(t, d) + k_1 \cdot \left(1 - b + b \cdot \frac{|d|}{\text{avgdl}}\right)}
+$$
+
 where:
 - $f(t, d)$ is the frequency of query term $t$ in document $d$.
 - $|d|$ is document token length, and $\text{avgdl}$ is the average document length across the corpus.
@@ -4127,11 +5121,18 @@ where:
 
 ##### 1.2 Dense Semantic Vector Search
 Sparse search excels at exact keywords and entity matching but fails on vocabulary mismatch (e.g. "heart attack" vs "myocardial infarction"). Dense retrieval (Karpukhin et al., EMNLP 2020) maps text into embedding space $\mathbb{R}^d$:
-$$\text{Sim}_{\text{dense}}(q, d) = \frac{\mathbf{e}_q^\top \mathbf{e}_d}{\|\mathbf{e}_q\|_2 \|\mathbf{e}_d\|_2}$$
+
+$$
+\text{Sim}_{\text{dense}}(q, d) = \frac{\mathbf{e}_q^\top \mathbf{e}_d}{\|\mathbf{e}_q\|_2 \|\mathbf{e}_d\|_2}
+$$
 
 ##### 1.3 Reciprocal Rank Fusion (RRF)
 Combining raw sparse scores (unbounded positive reals) with dense scores (cosine similarity $[-1, 1]$) through linear interpolation requires calibration. Cormack et al. (SIGIR 2009) proposed **Reciprocal Rank Fusion (RRF)** as a rank-based alternative that does not depend on the original score scales:
-$$\text{RRF}(d) = \sum_{m \in \{\text{BM25}, \text{Dense}\}} \frac{1}{k + \text{rank}_m(d)}$$
+
+$$
+\text{RRF}(d) = \sum_{m \in \{\text{BM25}, \text{Dense}\}} \frac{1}{k + \text{rank}_m(d)}
+$$
+
 where $k = 60$ is the standard smoothing parameter preventing top ranks from dominating disproportionately.
 
 ---
@@ -4217,11 +5218,19 @@ Shumailov et al. (Nature 2024) study recursive training on generated data and id
 `ModelCollapseGuard` does not observe model generations or estimate a model's output distribution. It applies text-level heuristics to each incoming sample:
 
 1. **Shannon Token Entropy**:
-   $$\mathcal{H}(T) = -\sum_{v \in V} p(v) \log_2 p(v)$$
+
+$$
+\mathcal{H}(T) = -\sum_{v \in V} p(v) \log_2 p(v)
+$$
+
    where $p(v) = \frac{\text{count}(v)}{|T|}$. Sequences with $\mathcal{H}(T) < \tau_{\mathcal{H}}$ (e.g. $\tau_{\mathcal{H}} = 2.5$) exhibit pathological unigram repetition and are quarantined.
 
 2. **Vocabulary Diversity Ratio**:
-   $$V_{\text{ratio}}(T) = \frac{|V_{\text{unique}}|}{|T|}$$
+
+$$
+V_{\text{ratio}}(T) = \frac{|V_{\text{unique}}|}{|T|}
+$$
+
    If $V_{\text{ratio}} < \tau_{V}$ (e.g. $\tau_{V} = 0.20$ for sequences $|T| \ge 20$), the text is rejected as synthetic hallucination or boilerplate spam.
 
 3. **Maximum N-Gram Repetition Ratio**:
@@ -4229,10 +5238,18 @@ Shumailov et al. (Nature 2024) study recursive training on generated data and id
 
 ##### 1.2 Robins Experience Replay & Stratified 70/30 Mixture
 To guarantee that the continually adapted model $\pi_\theta$ does not catastrophically drift from the anchor baseline $\pi_{\text{anchor}}$, Robins (1995) and Askell et al. (2021) formulate the continual optimization objective as a convex combination of anchor empirical risk and web empirical risk:
-$$\mathcal{L}_{\text{continual}}(\theta) = (1 - \alpha) \mathbb{E}_{(x, y) \sim \mathcal{D}_{\text{anchor}}} [\mathcal{L}(\theta; x, y)] + \alpha \mathbb{E}_{(x, y) \sim \mathcal{D}_{\text{web}}} [\mathcal{L}(\theta; x, y)]$$
+
+$$
+\mathcal{L}_{\text{continual}}(\theta) = (1 - \alpha) \mathbb{E}_{(x, y) \sim \mathcal{D}_{\text{anchor}}} [\mathcal{L}(\theta; x, y)] + \alpha \mathbb{E}_{(x, y) \sim \mathcal{D}_{\text{web}}} [\mathcal{L}(\theta; x, y)]
+$$
+
 where $\alpha = 0.30$.
 In finite-sample mini-batch training with batch size $B$:
-$$N_{\text{anchor}} = \lceil (1 - \alpha) B \rceil = \lceil 0.70 B \rceil, \quad N_{\text{web}} = B - N_{\text{anchor}} = \lfloor 0.30 B \rfloor$$
+
+$$
+N_{\text{anchor}} = \lceil (1 - \alpha) B \rceil = \lceil 0.70 B \rceil, \quad N_{\text{web}} = B - N_{\text{anchor}} = \lfloor 0.30 B \rfloor
+$$
+
 This controls the intended source proportion in the sampled batch when both pools are available. It does not guarantee that 70% of the gradient magnitude comes from anchor examples, and it implies no bound of the form $\mathbb{D}_{\text{KL}}(\pi_\theta \parallel \pi_{\text{anchor}}) \le \epsilon_{\text{drift}}$ without additional assumptions and an explicit constraint or regularizer.
 
 ##### 1.3 Memory-Mapped Token Reads
@@ -4357,17 +5374,36 @@ flowchart TD
 
 ###### 1. Dynamic / Continuous Batching
 Under traditional static batching with batch size $B$, the latency of the batch is bound by the slowest sequence length $T_{\max}$:
-$$\text{Latency}_{\text{static}} = \mathcal{O}\left(\max_{i \in [1, B]} T_i\right)$$
+
+$$
+\text{Latency}_{\text{static}} = \mathcal{O}\left(\max_{i \in [1, B]} T_i\right)
+$$
+
 In **Continuous Batching (Orca / vLLM)**, requests are scheduled at the token iteration level $t$. At step $t$, the active batch is:
-$$\mathcal{B}_t = \{r_i \mid \text{state}(r_i) == \text{GENERATING}\}$$
+
+$$
+\mathcal{B}_t = \{r_i \mid \text{state}(r_i) == \text{GENERATING}\}
+$$
+
 If request $r_j$ completes generation at step $t$, it is immediately evicted and replaced by candidate request $r_{k}$ from the waiting queue, maximizing GPU tensor core utilization to near $100\%$.
 
 ###### 2. Semantic Caching Formulation
 Let query $q$ have dense embedding $\mathbf{e}_q$. Let cache pool $\mathcal{C} = \{(q_i, \mathbf{e}_{q_i}, \mathcal{R}_i)\}_{i=1}^M$.
 The maximum semantic similarity is:
-$$s^* = \max_{i \in [1, M]} \frac{\mathbf{e}_q^\top \mathbf{e}_{q_i}}{\|\mathbf{e}_q\| \|\mathbf{e}_{q_i}\|}$$
+
+$$
+s^* = \max_{i \in [1, M]} \frac{\mathbf{e}_q^\top \mathbf{e}_{q_i}}{\|\mathbf{e}_q\| \|\mathbf{e}_{q_i}\|}
+$$
+
 The decision rule is:
-$$\text{Response}(q) = \begin{cases} \mathcal{R}_{i^*} & \text{if } s^* \ge \tau_{\text{cache}} \quad (\text{Cache Hit: } < 5\text{ms}) \\ \text{Pipeline}(q) & \text{if } s^* < \tau_{\text{cache}} \quad (\text{Cache Miss: Hybrid RAG + LLM}) \end{cases}$$
+
+$$
+\text{Response}(q) = \begin{cases}
+  \mathcal{R}_{i^*} & \text{if } s^* \ge \tau_{\text{cache}} \quad (\text{Cache Hit: } < 5\text{ms}) \\
+  \text{Pipeline}(q) & \text{if } s^* < \tau_{\text{cache}} \quad (\text{Cache Miss: Hybrid RAG + LLM})
+\end{cases}
+$$
+
 With $\tau_{\text{cache}} = 0.95$, typically $30\% - 50\%$ of identical/paraphrased user queries during peak events are served directly from cache, reducing downstream retrieval and model load by up to half.
 
 ###### 3. Request Coalescing & Debouncing
@@ -4375,7 +5411,11 @@ When $N$ requests $\{q_1, \dots, q_N\}$ arrive within a debounce window $\Delta 
 
 ###### 4. Event-Driven Decoupled Training Triggering
 Continual training never executes inline with the HTTP request. Instead, training is triggered if and only if:
-$$\text{Trigger} = \left( |\mathcal{D}_{\text{web\_new}}| \ge N_{\text{threshold}} \right) \lor \left( \Delta t \ge T_{\text{interval}} \right) \lor \left( \text{Drift}(\mathcal{D}_{\text{eval}}) > \tau_{\text{drift}} \right)$$
+
+$$
+\text{Trigger} = \left( |\mathcal{D}_{\text{web\_new}}| \ge N_{\text{threshold}} \right) \lor \left( \Delta t \ge T_{\text{interval}} \right) \lor \left( \text{Drift}(\mathcal{D}_{\text{eval}}) > \tau_{\text{drift}} \right)
+$$
+
 where $N_{\text{threshold}} = 500$, $T_{\text{interval}} = 1\text{ hour}$, and $\tau_{\text{drift}} = 0.05$.
 
 ###### 5. Zero-Downtime Atomic Hot-Swap
