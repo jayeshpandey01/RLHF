@@ -2608,28 +2608,6 @@ flowchart TD
     style Rollback fill:#7c2d12,stroke:#f97316,stroke-width:2px,color:#fff
 ```
 
-#### Diagram 2: Citation Verification & Claim Entailment Flow
-```mermaid
-flowchart LR
-    Answer["Generated Response Y"] --> SentSplit["Sentence & Claim Splitter"]
-    SentSplit --> Claims["Atomic Claims {c_1, ..., c_k}"]
-    
-    Answer --> RegexCite["Citation Parser<br/>[1], [2], Author-Year, URLs"]
-    RegexCite --> Tags["Extracted Citations C(s_i)"]
-
-    Claims --> EntailCheck["Entailment Verifier<br/>(Lexical + Semantic Containment)"]
-    Tags --> EntailCheck
-    Context["Retrieved Ground Context D"] --> EntailCheck
-
-    EntailCheck --> Prec["Citation Precision<br/>Supported Citations / Total Citations"]
-    EntailCheck --> Rec["Citation Recall<br/>Supported Claims / Total Claims"]
-    EntailCheck --> Faith["Ragas Faithfulness<br/>Entailed Claims / Total Claims"]
-
-    style Answer fill:#1e293b,stroke:#38bdf8,stroke-width:2px,color:#fff
-    EntailCheck fill:#4c1d95,stroke:#a855f7,stroke-width:2px,color:#fff
-    style Faith fill:#047857,stroke:#10b981,stroke-width:2px,color:#fff
-```
-
 ---
 
 ### 8.6 Component Interfaces & Data Contracts
