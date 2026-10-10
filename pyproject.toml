@@ -19,6 +19,8 @@ dependencies = [
     "trl>=0.8.0",
     "accelerate>=0.29.0",
     "datasketch>=1.6.0",
+    "mmh3>=4.0.0",
+    "scipy>=1.10.0",
     "loguru>=0.7.2",
     "python-multipart>=0.0.9",
 ]
