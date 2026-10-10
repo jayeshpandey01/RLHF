@@ -253,6 +253,8 @@ class StatisticalReleaseGate:
         parity_delta: float = 0.05,
         pass_threshold: float = 3.5,
         random_seed: int = 42,
+        edge_case_delta_threshold: float = -0.15,
+        min_improvement_delta: float = 0.0,
     ):
         """Initialize the Statistical Release Gate.
 
@@ -263,6 +265,8 @@ class StatisticalReleaseGate:
             parity_delta: Minimum allowed negative delta for non-inferiority parity (default 0.05).
             pass_threshold: Minimum rubric score considered a successful pass (default 3.5).
             random_seed: Deterministic seed for bootstrap resampling.
+            edge_case_delta_threshold: Minimum allowed mean delta for edge cases (default -0.15).
+            min_improvement_delta: Minimum overall mean delta required for parity promotion (default 0.0).
         """
         self.bootstrap_samples = int(bootstrap_samples)
         self.ci_level = float(ci_level)
@@ -270,6 +274,8 @@ class StatisticalReleaseGate:
         self.parity_delta = float(parity_delta)
         self.pass_threshold = float(pass_threshold)
         self.random_seed = int(random_seed)
+        self.edge_case_delta_threshold = float(edge_case_delta_threshold)
+        self.min_improvement_delta = float(min_improvement_delta)
 
     def evaluate_gate(
         self,
@@ -362,6 +368,7 @@ class StatisticalReleaseGate:
         for b_name in buckets:
             b_cases = [rec for rec in case_records if rec["bucket"] == b_name]
             if not b_cases:
+                violated_checks.append(f"Bucket '{b_name}' has 0 test cases in evaluation suite!")
                 continue
             b_cand = [r["score_cand"] for r in b_cases]
             b_base = [r["score_base"] for r in b_cases]
@@ -413,10 +420,10 @@ class StatisticalReleaseGate:
             violated_checks.append(f"Core Domain Non-Inferiority: FAILED (delta={core_delta:+.3f} < -{self.parity_delta}).")
 
         # Criterion 4: Edge Case Delta Bounds
-        if edge_delta >= -0.15:
-            passed_checks.append(f"Edge Case Delta Bounds: PASSED (delta={edge_delta:+.3f} >= -0.15).")
+        if edge_delta >= self.edge_case_delta_threshold:
+            passed_checks.append(f"Edge Case Delta Bounds: PASSED (delta={edge_delta:+.3f} >= {self.edge_case_delta_threshold:+.3f}).")
         else:
-            violated_checks.append(f"Edge Case Delta Bounds: FAILED (delta={edge_delta:+.3f} < -0.15).")
+            violated_checks.append(f"Edge Case Delta Bounds: FAILED (delta={edge_delta:+.3f} < {self.edge_case_delta_threshold:+.3f}).")
 
         # Criterion 5: Adversarial Resistance
         if adv_mean >= self.pass_threshold:
@@ -446,14 +453,22 @@ class StatisticalReleaseGate:
         is_stat_sig_regress = (
             overall_boot.ci_upper < 0.0
             or (overall_hypo.wilcoxon_p < self.alpha and overall_boot.mean_delta < 0.0)
+            or (overall_hypo.mcnemar_p < self.alpha and overall_hypo.regressions > overall_hypo.improvements)
         )
-        is_core_or_regr_violation = core_reg > 0 or regr_reg > 0 or core_delta < -self.parity_delta
+        is_core_or_regr_violation = (
+            core_reg > 0
+            or regr_reg > 0
+            or core_delta < -self.parity_delta
+            or edge_delta < self.edge_case_delta_threshold
+        )
+        has_core_domain = "core_domain" in bucket_breakdown
 
         if is_core_or_regr_violation or is_stat_sig_regress:
             decision = GateDecision.TRIGGER_ROLLBACK
             summary = (
                 f"Release BLOCKED with TRIGGER_ROLLBACK. Core regressions: {core_reg}, "
-                f"Replay regressions: {regr_reg}, Mean Delta: {overall_boot.mean_delta:+.3f}, "
+                f"Replay regressions: {regr_reg}, Edge delta: {edge_delta:+.3f}, "
+                f"Mean Delta: {overall_boot.mean_delta:+.3f}, "
                 f"95% CI: [{overall_boot.ci_lower:+.3f}, {overall_boot.ci_upper:+.3f}]."
             )
         elif ci_width > 0.80 or judge_inconsistency > 0.25:
@@ -463,12 +478,14 @@ class StatisticalReleaseGate:
                 f"high judge inconsistency (kappa={judge_inconsistency:.3f} > 0.25). Hold release for audit."
             )
         elif (
-            core_reg == 0
+            has_core_domain
+            and core_reg == 0
             and regr_reg == 0
             and adv_mean >= self.pass_threshold
+            and edge_delta >= self.edge_case_delta_threshold
             and (
                 overall_boot.ci_lower > 0.0  # Statistically superior
-                or (overall_boot.ci_lower >= -self.parity_delta and overall_boot.mean_delta >= 0.0)  # Non-inferior parity
+                or (overall_boot.ci_lower >= -self.parity_delta and overall_boot.mean_delta >= self.min_improvement_delta)  # Non-inferior parity
             )
         ):
             decision = GateDecision.PROCEED_DEPLOY

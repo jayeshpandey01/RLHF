@@ -53,12 +53,13 @@ class TestGateDecisionLoopholesGap(unittest.TestCase):
 
         # 1. Edge Case check failed:
         self.assertTrue(any("Edge Case Delta Bounds: FAILED" in v for v in report.violated_checks))
-        # 2. Yet the gate approved PROCEED_DEPLOY!
-        self.assertEqual(
+        # 2. In fixed gate, edge case failure strictly BLOCKS PROCEED_DEPLOY and triggers rollback:
+        self.assertNotEqual(
             report.decision,
             GateDecision.PROCEED_DEPLOY,
-            "Gate promoted candidate despite failing edge case delta bound criterion!",
+            "Fixed gate correctly refuses PROCEED_DEPLOY when edge case delta bound criterion fails!",
         )
+        self.assertEqual(report.decision, GateDecision.TRIGGER_ROLLBACK)
 
     def test_noop_candidate_is_promoted(self):
         """Demonstrate that a no-op identical candidate (mean_delta=0.0) is promoted."""

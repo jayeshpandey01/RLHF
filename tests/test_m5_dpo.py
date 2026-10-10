@@ -158,7 +158,7 @@ class TestM5DPO(unittest.TestCase):
         self.assertGreater(l_smooth.item(), l_clean.item())
 
     def test_ipo_loss_quadratic(self):
-        """Verify Identity Preference Optimization (IPO) computes quadratic penalty."""
+        """Verify Identity Preference Optimization (IPO) computes quadratic penalty on unscaled log-ratios."""
         beta = 0.2
         loss_ipo = DPOLoss(beta=beta, loss_type="ipo")
 
@@ -166,11 +166,12 @@ class TestM5DPO(unittest.TestCase):
         pi_l = torch.tensor([1.0])
         ref = torch.tensor([0.0])
 
-        # delta = beta * (2.0 - 0.0) - beta * (1.0 - 0.0) = 0.2
+        # Azar et al. (2024) / TRL formulation:
+        # h = (2.0 - 0.0) - (1.0 - 0.0) = 1.0
         # tau = 1 / (2 * 0.2) = 2.5
-        # expected loss = (0.2 - 2.5)^2 = (-2.3)^2 = 5.29
+        # expected loss = (1.0 - 2.5)^2 = (-1.5)^2 = 2.25
         loss, metrics = loss_ipo(pi_w, pi_l, ref, ref)
-        self.assertAlmostEqual(loss.item(), (0.2 - 2.5) ** 2, places=4)
+        self.assertAlmostEqual(loss.item(), (1.0 - 2.5) ** 2, places=4)
 
     def test_reference_caching_parity(self):
         """Verify cached reference log-probabilities produce identical outputs to live engine."""

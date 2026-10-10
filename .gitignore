@@ -41,3 +41,7 @@ htmlcov/
 # Local Environment Variables
 .env
 .env.local
+
+# Research Gap Analysis & Audit
+actual_code_gaps/
+

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Literal, Optional, Union
 
+from loguru import logger
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -69,13 +70,20 @@ class DPOLoss(nn.Module):
         """
         device = policy_chosen_logps.device
 
-        # Compute implicit rewards
+        # Compute implicit rewards and unscaled log-ratios h
         if self.reference_free or reference_chosen_logps is None or reference_rejected_logps is None:
+            if not self.reference_free:
+                logger.warning(
+                    "DPOLoss: reference log-probabilities were not provided with reference_free=False. "
+                    "Implicit rewards are running in reference-free mode."
+                )
+            log_ratios = policy_chosen_logps - policy_rejected_logps
             chosen_rewards = self.beta * policy_chosen_logps
             rejected_rewards = self.beta * policy_rejected_logps
         else:
             ref_chosen = reference_chosen_logps.to(device)
             ref_rejected = reference_rejected_logps.to(device)
+            log_ratios = (policy_chosen_logps - ref_chosen) - (policy_rejected_logps - ref_rejected)
             chosen_rewards = self.beta * (policy_chosen_logps - ref_chosen)
             rejected_rewards = self.beta * (policy_rejected_logps - ref_rejected)
 
@@ -83,9 +91,11 @@ class DPOLoss(nn.Module):
 
         # Compute loss according to loss_type
         if self.loss_type == "ipo":
-            # IPO: (delta - 1 / (2 * beta))^2
+            # IPO (Azar et al., Google DeepMind 2024 / TRL):
+            # Target margin applies directly to unscaled log-ratio difference h:
+            # L_IPO = (h - 1 / (2 * beta))^2
             tau = 1.0 / (2.0 * self.beta)
-            loss = torch.mean((delta - tau) ** 2)
+            loss = torch.mean((log_ratios - tau) ** 2)
         elif self.loss_type == "cdpo" or self.label_smoothing > 0.0:
             # cDPO: (1 - eps) * softplus(-delta) + eps * softplus(delta)
             eps = self.label_smoothing

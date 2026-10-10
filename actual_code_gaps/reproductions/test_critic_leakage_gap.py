@@ -56,24 +56,26 @@ class TestCriticActionLeakageGap(unittest.TestCase):
         seq_b = torch.tensor([[10, 20, 30, 95]])
 
         with torch.no_grad():
-            val_a = self.critic(seq_a)  # Shape (1, 4)
-            val_b = self.critic(seq_b)  # Shape (1, 4)
+            h_a = self.critic.extract_hidden_states(seq_a)
+            raw_val_a = self.critic.value_head(h_a)
+            h_b = self.critic.extract_hidden_states(seq_b)
+            raw_val_b = self.critic.value_head(h_b)
 
         # 1. Past positions (t < 3) must be identical due to causal attention
         for t in range(3):
             self.assertTrue(
-                torch.isclose(val_a[0, t], val_b[0, t], atol=1e-6),
+                torch.isclose(raw_val_a[0, t], raw_val_b[0, t], atol=1e-6),
                 f"Position {t} should be identical in both sequences.",
             )
 
         # 2. Position 3 should be V(s_3), independent of action at position 3.
-        # But in current CriticModel, values[:, 3] differs because it embeds token 3!
-        action_leakage_delta = torch.abs(val_a[0, 3] - val_b[0, 3]).item()
-        print(f"\n[Critic Gap Verification] Action leakage delta at position 3: {action_leakage_delta:.6f}")
-        print(f"  val_a[0, 3] (action=40): {val_a[0, 3].item():.6f}")
-        print(f"  val_b[0, 3] (action=95): {val_b[0, 3].item():.6f}")
+        # But in unshifted Critic, raw values[:, 3] differs because it embeds token 3!
+        action_leakage_delta = torch.abs(raw_val_a[0, 3] - raw_val_b[0, 3]).item()
+        print(f"\n[Critic Gap Verification] Action leakage delta at position 3 in unshifted hidden states: {action_leakage_delta:.6f}")
+        print(f"  raw_val_a[0, 3] (action=40): {raw_val_a[0, 3].item():.6f}")
+        print(f"  raw_val_b[0, 3] (action=95): {raw_val_b[0, 3].item():.6f}")
 
-        # The current implementation fails this invariance check:
+        # The unshifted implementation fails this invariance check:
         self.assertGreater(
             action_leakage_delta,
             1e-4,
@@ -89,16 +91,13 @@ class TestCriticActionLeakageGap(unittest.TestCase):
         seq_b = torch.tensor([[10, 20, 30, 95]])
 
         with torch.no_grad():
-            raw_a = self.critic(seq_a)
-            raw_b = self.critic(seq_b)
+            val_a = self.critic(seq_a)
+            val_b = self.critic(seq_b)
 
-        # Shift values: V(s_t) = raw_values[:, t - 1] for t >= 1
-        shifted_val_a_at_3 = raw_a[0, 2]  # State before action 3
-        shifted_val_b_at_3 = raw_b[0, 2]  # State before action 3
-
+        # In our fixed CriticModel, values[:, 3] is V(s_3) = V(x, y_{<3}), independent of token 3
         self.assertTrue(
-            torch.isclose(shifted_val_a_at_3, shifted_val_b_at_3, atol=1e-6),
-            "Shifted value at position 3 is strictly invariant to action token at position 3.",
+            torch.isclose(val_a[0, 3], val_b[0, 3], atol=1e-6),
+            "Shifted CriticModel value at position 3 is strictly invariant to action token at position 3.",
         )
 
 

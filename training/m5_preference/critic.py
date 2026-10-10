@@ -84,11 +84,18 @@ class CriticModel(nn.Module):
         """
         input_ids = input_ids.to(self.device)
         hidden = self.extract_hidden_states(input_ids)  # Shape: (B, T, d_model)
-        values = self.value_head(hidden)                # Shape: (B, T)
+        raw_values = self.value_head(hidden)            # Shape: (B, T)
+
+        # Causal temporal alignment: state s_t = (x, y_{<t}) precedes action token y_t.
+        # In a causal transformer, hidden state at index t - 1 has observed tokens up to t - 1.
+        # Shift values right by 1 so values[:, t] represents V(s_t) = V(x, y_{<t}).
+        # Index 0 represents the unconditioned state before the first prompt token, initialized to 0.0.
+        shifted_values = torch.zeros_like(raw_values)
+        shifted_values[:, 1:] = raw_values[:, :-1]
 
         if attention_mask is not None:
             mask = attention_mask.to(self.device).float()
-            values = values * mask
+            shifted_values = shifted_values * mask
 
-        return values
+        return shifted_values
 

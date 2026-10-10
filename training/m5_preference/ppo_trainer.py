@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional, Sequence, Union
 
 import torch
 import torch.nn as nn
@@ -129,6 +129,13 @@ class PPOTrainer:
         self.lam = float(lam)
         self.max_grad_norm = float(max_grad_norm)
 
+        # Fix GAP-05: Warn practitioner if KL regularization was requested but ref_model is None
+        if self.ref_model is None and self.kl_coef > 0.0:
+            logger.warning(
+                f"PPOTrainer: ref_model is None with kl_coef={self.kl_coef:.4f}. "
+                "Token-level KL penalty will be zero! Provide a frozen reference policy to avoid reward hacking."
+            )
+
     @torch.no_grad()
     def build_rollout_batch(
         self,
@@ -157,15 +164,21 @@ class PPOTrainer:
             p_len = int(prompt_lengths[i].item())
             action_mask[i, p_len:] = attention_mask[i, p_len:].float()
 
-        # 2. Extract policy log-probs and critic state values
-        old_log_probs, _ = compute_token_log_probs_and_entropy(self.actor, input_ids)
-        old_values = self.critic(input_ids, attention_mask)
+        # 2. Extract policy log-probs and critic state values in deterministic eval mode (Fix GAP-03)
+        self.actor.eval()
+        self.critic.eval()
+        try:
+            old_log_probs, _ = compute_token_log_probs_and_entropy(self.actor, input_ids)
+            old_values = self.critic(input_ids, attention_mask)
 
-        # 3. Extract reference log-probs
-        if self.ref_model is not None:
-            ref_log_probs, _ = compute_token_log_probs_and_entropy(self.ref_model, input_ids)
-        else:
-            ref_log_probs = old_log_probs.detach().clone()
+            # 3. Extract reference log-probs
+            if self.ref_model is not None:
+                ref_log_probs, _ = compute_token_log_probs_and_entropy(self.ref_model, input_ids)
+            else:
+                ref_log_probs = old_log_probs.detach().clone()
+        finally:
+            self.actor.train()
+            self.critic.train()
 
         # 4. Compute token-level rewards
         rewards = torch.zeros((B, T), dtype=torch.float32, device=self.device)
@@ -281,4 +294,57 @@ class PPOTrainer:
         if "critic_optimizer_state_dict" in checkpoint:
             self.critic_optimizer.load_state_dict(checkpoint["critic_optimizer_state_dict"])
         logger.info(f"Loaded PPO Actor-Critic checkpoint from {path}")
+
+    @torch.no_grad()
+    def sample_rollouts(
+        self,
+        prompts: Sequence[str],
+        tokenizer,
+        max_new_tokens: int = 32,
+        temperature: float = 0.8,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, list[str]]:
+        """Autoregressive online rollout sampling for a batch of prompts (Fix GAP-04).
+
+        Samples 1 trajectory per prompt using current actor policy.
+        Returns padded input_ids, attention_mask, prompt_lengths, and completion texts.
+        """
+        was_training = self.actor.training
+        self.actor.eval()
+        all_sequences: list[torch.Tensor] = []
+        all_prompt_lens: list[int] = []
+        all_completion_texts: list[str] = []
+
+        try:
+            for prompt in prompts:
+                prompt_tokens = tokenizer.encode(prompt)
+                p_len = len(prompt_tokens)
+                p_idx = torch.tensor([prompt_tokens], dtype=torch.long, device=self.device)
+
+                gen_seq = self.actor.generate(
+                    p_idx, max_new_tokens=max_new_tokens, temperature=temperature
+                )
+                full_tokens = gen_seq[0].tolist()
+                completion_tokens = full_tokens[p_len:]
+                completion_str = tokenizer.decode(completion_tokens)
+
+                all_sequences.append(gen_seq[0])
+                all_prompt_lens.append(p_len)
+                all_completion_texts.append(completion_str)
+
+            max_len = max(seq.size(0) for seq in all_sequences)
+            pad_id = getattr(tokenizer, "pad_token_id", 0)
+
+            padded_ids = torch.full((len(all_sequences), max_len), pad_id, dtype=torch.long, device=self.device)
+            attn_mask = torch.zeros((len(all_sequences), max_len), dtype=torch.long, device=self.device)
+
+            for i, seq in enumerate(all_sequences):
+                padded_ids[i, : seq.size(0)] = seq
+                attn_mask[i, : seq.size(0)] = 1
+
+            prompt_lens_tensor = torch.tensor(all_prompt_lens, dtype=torch.long, device=self.device)
+            return padded_ids, attn_mask, prompt_lens_tensor, all_completion_texts
+        finally:
+            if was_training:
+                self.actor.train()
+
 

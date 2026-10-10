@@ -77,13 +77,12 @@ class TestIPOLossDiscrepancyGap(unittest.TestCase):
         print(f"  Expected paper loss:                {expected_paper_loss:.4f}")
         print(f"  Actual dpo_loss.py loss:            {actual_code_loss:.4f}")
 
-        # The loss values differ substantially due to beta-scaling:
-        self.assertNotAlmostEqual(actual_code_loss, expected_paper_loss, places=2)
-        # Specifically, code computes (beta * h - 1 / (2 * beta))^2 = (0.2 - 5.0)^2 = 23.04
-        self.assertAlmostEqual(actual_code_loss, 23.04, places=2)
+        # The fixed DPOLoss matches the paper formula: (h - 1/(2*beta))^2 = (2.0 - 5.0)^2 = 9.0
+        self.assertAlmostEqual(actual_code_loss, expected_paper_loss, places=4)
+        print("  [Verified] DPOLoss now matches Azar et al. (2024) and TRL canonical formulation!")
 
     def test_ipo_loss_optimal_margin_point(self):
-        """Demonstrate that code achieves minimum loss at h=50 instead of h=5."""
+        """Demonstrate that code achieves minimum loss at h=5 (matching Azar et al.)."""
         beta = 0.1
         loss_fn = DPOLoss(beta=beta, loss_type="ipo")
 
@@ -93,18 +92,18 @@ class TestIPOLossDiscrepancyGap(unittest.TestCase):
         ref_0 = torch.tensor([0.0])
         loss_at_5, _ = loss_fn(pi_w_5, pi_l_5, ref_0, ref_0)
 
-        # 2. Test when h = 50.0 (the unintended optimal point in dpo_loss.py)
+        # 2. Test when h = 50.0
         pi_w_50 = torch.tensor([50.0])
         pi_l_50 = torch.tensor([0.0])
         loss_at_50, _ = loss_fn(pi_w_50, pi_l_50, ref_0, ref_0)
 
         print(f"  dpo_loss.py loss at h=5.0 (true target):   {loss_at_5.item():.4f}")
-        print(f"  dpo_loss.py loss at h=50.0 (erroneous):     {loss_at_50.item():.4f}")
+        print(f"  dpo_loss.py loss at h=50.0:                {loss_at_50.item():.4f}")
 
-        # In dpo_loss.py, loss at h=5 is NOT zero: (0.1 * 5 - 5)^2 = (-4.5)^2 = 20.25!
-        self.assertGreater(loss_at_5.item(), 10.0)
-        # In dpo_loss.py, loss at h=50 IS zero: (0.1 * 50 - 5)^2 = 0.0!
-        self.assertAlmostEqual(loss_at_50.item(), 0.0, places=4)
+        # In fixed DPOLoss, loss at h=5 IS zero: (5.0 - 5.0)^2 = 0.0!
+        self.assertAlmostEqual(loss_at_5.item(), 0.0, places=4)
+        # Loss at h=50 is penalized: (50 - 5)^2 = 2025.0!
+        self.assertAlmostEqual(loss_at_50.item(), 2025.0, places=2)
 
 
 if __name__ == "__main__":
