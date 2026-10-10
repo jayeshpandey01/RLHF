@@ -1,28 +1,44 @@
-# Autonomous Continual Learning LLM Post-Training Pipeline
-# Comprehensive Research, Mathematics, & Implementation Dossier
+# Autonomous Continual Learning & Post-Training Alignment
+## A Mathematical Monograph & Engineering Specification
 
-> **Scope**: This single, authoritative document consolidates the entire theoretical research, mathematical proofs, derivations, algorithmic specifications, and empirical benchmarks for the autonomous continual-learning LLM system. It progresses sequentially from system architecture and hardware foundations to model internals, autograd, attention, transformers, web curation, and post-training alignment (SFT, DPO, GRPO).
+> **Abstract**: This volume presents a complete mathematical derivation, theoretical foundation, and production engineering specification for autonomous, continual-learning Large Language Models. Organized into seven thematic parts across eleven chapters, this treatise details the full continuum from computational graphs and causal self-attention to web corpus curation, parameter-efficient fine-tuning (LoRA), preference optimization (Bradley-Terry, DPO, IPO), reinforcement learning (PPO, GAE, DeepSeek GRPO), non-parametric statistical hypothesis release gating, and zero-downtime experience replay orchestration.
 
 ---
 
 # Table of Contents
-1. [Step 0: System Architecture & Continual Learning Dataflow](#step-0-system-architecture--continual-learning-dataflow)
-2. [Step 1: Milestone 0 — Hardware Strategy & Data Contracts](#step-1-milestone-0--hardware-strategy--data-contracts)
-3. [Step 2: Milestone 1 / Phase 1.1 — Reverse-Mode Autograd Engine & Gradient Verification](#step-2-milestone-1--phase-11--reverse-mode-autograd-engine--gradient-verification)
-4. [Step 3: Milestone 1 / Phase 1.2 — Language Modeling Foundations, Bigram, & Numerical Loss](#step-3-milestone-1--phase-12--language-modeling-foundations-bigram--numerical-loss)
-5. [Step 4: Milestone 1 / Phase 1.3 — Causal Multi-Head Self-Attention & Algorithmic KV-Cache](#step-4-milestone-1--phase-13--causal-multi-head-self-attention--algorithmic-kv-cache)
-6. [Step 5: Milestone 1 / Phase 1.4 — Mini-GPT Pre-LayerNorm Generative Transformer](#step-5-milestone-1--phase-14--mini-gpt-pre-layernorm-generative-transformer)
-7. [Step 6: Milestone 2 — Web Ingestion, MinHash LSH, & Model Collapse Prevention](#step-6-milestone-2--web-ingestion-minhash-lsh--model-collapse-prevention)
-8. [Step 7: Milestone 3 — Post-Training Alignment (SFT & Parameter-Efficient LoRA)](#step-7-milestone-3--post-training-alignment-sft-dpo--grpo)
-9. [Step 8: Milestone 4 — Evaluation, Citation Verification, & Autonomous Release Gate](#step-8-milestone-4--evaluation-citation-verification--autonomous-release-gate)
-10. [Step 9: Milestone 5 — Preference Learning, Direct Preference Optimization (DPO), & Reinforcement Learning with Verifiable Rewards (GRPO)](#step-9-milestone-5--preference-learning-direct-preference-optimization-dpo--reinforcement-learning-with-verifiable-rewards-grpo)
-11. [Step 10: Milestone 6 — Autonomous Continual Learning Loop Orchestrator, Hybrid Retrieval, & Serving Gateway](#step-10-milestone-6--autonomous-continual-learning-loop-orchestrator-hybrid-retrieval--serving-gateway)
-12. [Research Verification and Implementation Status](#research-verification-and-implementation-status)
+
+### Part I: System Architecture & Computational Foundations
+1. [Chapter 1: System Architecture & Continual Learning Topology](#chapter-1-system-architecture--continual-learning-topology)
+2. [Chapter 2: Hardware Acceleration Strategy & Typed Data Contracts](#chapter-2-hardware-acceleration-strategy--typed-data-contracts)
+
+### Part II: Transformer Internals & Deep Learning from Scratch
+3. [Chapter 3: Reverse-Mode Automatic Differentiation & Computational Graphs](#chapter-3-reverse-mode-automatic-differentiation--computational-graphs)
+4. [Chapter 4: Statistical Language Modeling & Optimization Dynamics](#chapter-4-statistical-language-modeling--optimization-dynamics)
+5. [Chapter 5: Causal Multi-Head Self-Attention & Algorithmic KV-Caching](#chapter-5-causal-multi-head-self-attention--algorithmic-kv-caching)
+6. [Chapter 6: Generative Pre-LayerNorm Transformer Architecture](#chapter-6-generative-pre-layernorm-transformer-architecture)
+
+### Part III: Corpus Engineering & Distributional Stability
+7. [Chapter 7: Web Ingestion, MinHash LSH Deduplication, & Model Collapse Prevention](#chapter-7-web-ingestion-minhash-lsh-deduplication--model-collapse-prevention)
+
+### Part IV: Supervised Adaptation & Parameter Efficiency
+8. [Chapter 8: Supervised Fine-Tuning (SFT) & Low-Rank Adaptation (LoRA)](#chapter-8-supervised-fine-tuning-sft--low-rank-adaptation-lora)
+
+### Part V: Multi-Metric Evaluation & Statistical Release Gating
+9. [Chapter 9: Benchmark Evaluation, Citation Faithfulness, & Autonomous Release Gating](#chapter-9-benchmark-evaluation-citation-faithfulness--autonomous-release-gating)
+
+### Part VI: Preference Learning & Reinforcement Learning Alignment
+10. [Chapter 10: Preference Learning, Direct Preference Optimization (DPO), & Reinforcement Learning (PPO & GRPO)](#chapter-10-preference-learning-direct-preference-optimization-dpo--reinforcement-learning-ppo--grpo)
+
+### Part VII: Production Orchestration & Serving
+11. [Chapter 11: Continual Learning Loop Orchestration, Hybrid Retrieval, & Zero-Downtime Serving](#chapter-11-continual-learning-loop-orchestration-hybrid-retrieval--serving-gateway)
+
+### Appendices
+12. [Appendix A: Empirical Verification & Implementation Status](#appendix-a-empirical-verification--implementation-status)
 
 ---
 
 
-# Step 0: System Architecture & Continual Learning Dataflow
+# Chapter 1: System Architecture & Continual Learning Topology
 
 ### 0.1 End-to-End Dataflow Topology
 ```
@@ -56,7 +72,7 @@ This is a prototype path, not a production guarantee: source retrieval and answe
 
 ---
 
-# Step 1: Milestone 0 — Hardware Strategy & Data Contracts
+# Chapter 2: Hardware Acceleration Strategy & Typed Data Contracts
 
 ### 1.1 Hardware Strategy Formulation
 The host hardware detection layer dynamically determines optimal compute precision and execution parameters:
@@ -76,7 +92,7 @@ Strict data integrity contracts govern every transition:
 
 ---
 
-# Step 2: Milestone 1 / Phase 1.1 — Reverse-Mode Autograd Engine & Gradient Verification
+# Chapter 3: Reverse-Mode Automatic Differentiation & Computational Graphs
 
 ### 2.1 Landmark Research Papers Behind Autograd
 1. **Linnainmaa, S. (1970)**: *The representation of the cumulative rounding error of an algorithm as a Taylor expansion of the local rounding errors*. Master's thesis, Univ. of Helsinki. (Invented reverse-mode automatic differentiation).
@@ -119,7 +135,7 @@ $$\epsilon_{\text{rel}} = \frac{|\nabla_{\text{analytical}} - \nabla_{\text{nume
 
 ---
 
-# Step 3: Milestone 1 / Phase 1.2 — Language Modeling Foundations, Bigram, & Numerical Loss
+# Chapter 4: Statistical Language Modeling & Optimization Dynamics
 
 ### 3.1 Bigram Statistical Baseline & Maximum Likelihood Estimation (MLE)
 Given a sequence of discrete tokens $(w_1, \dots, w_N) \in \mathbb{V}^N$, the first-order Markov bigram assumption is:
@@ -148,7 +164,7 @@ $$\frac{\partial \mathcal{L}}{\partial z_i} = P_i - \mathbb{I}(i = y)$$
 
 ---
 
-# Step 4: Milestone 1 / Phase 1.3 — Causal Multi-Head Self-Attention & Algorithmic KV-Cache
+# Chapter 5: Causal Multi-Head Self-Attention & Algorithmic KV-Caching
 
 ### 4.1 Scaled Dot-Product Attention Equation
 $$\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{Q K^T}{\sqrt{d_k}} + M\right) V$$
@@ -179,7 +195,7 @@ In autoregressive decoding, token $T+1$ only requires computing query $Q_{T+1} \
 
 ---
 
-# Step 5: Milestone 1 / Phase 1.4 — Mini-GPT Pre-LayerNorm Generative Transformer
+# Chapter 6: Generative Pre-LayerNorm Transformer Architecture
 
 ### 5.1 Pre-LayerNorm Gradient Highway Theorem (Xiong et al., 2020)
 In Pre-LayerNorm:
@@ -217,7 +233,7 @@ $$\mathcal{L}_{\text{init}} = -\ln(1/65) = \ln(65) \approx 4.17438 \text{ nats}$
 
 ---
 
-# Step 6: Milestone 2 — Web Ingestion, Data Quality, & Model Collapse Prevention
+# Chapter 7: Web Ingestion, MinHash LSH Deduplication, & Model Collapse Prevention
 
 ### 6.1 Academic Literature & Theoretical Foundations
 
@@ -301,7 +317,7 @@ Every scraped document must pass five deterministic bounds:
 Given a set of held-out evaluation test prompts $\mathcal{Q}_{\text{test}}$, a document $d$ is strictly quarantined if any 13-gram from $\mathcal{Q}_{\text{test}}$ appears in $d$:
 $$\text{Contaminated}(d) = \mathbb{I}\left( \exists g \in \text{13-grams}(\mathcal{Q}_{\text{test}}) : g \in d \right)$$
 
-### 6.4 Phase 2.1: Multi-Source Web & Geospatial Ingestion Architecture
+### 7.4 Section 7.1: Multi-Source Web & Geospatial Ingestion Architecture
 
 #### 1. Inherent Limitations of DuckDuckGo-Only Scraping
 Relying solely on DuckDuckGo scraping for LLM post-training introduces critical architectural vulnerabilities:
@@ -470,7 +486,7 @@ $$A_i = \frac{R_i - \text{mean}(\{R_1, \dots, R_G\})}{\text{std}(\{R_1, \dots, R
 - **Policy Update**: Trajectories that retrieved the right information with fewer searches and accurate citations receive positive advantage $A_i > 0$. Trajectories that failed, hallucinated citations, or spammed redundant queries receive negative advantage $A_i < 0$.
 - **Outcome**: The LLM autonomously discovers optimal query formulations, verifies external evidence, and produces grounded responses without requiring human annotators!
 
-### 6.7 Phase 2.2: Industrial Data Cleaning, MinHash LSH Deduplication, & Contamination Pipeline
+### 7.7 Section 7.2: Industrial Data Cleaning, MinHash LSH Deduplication, & Contamination Pipeline
 
 #### 1. Synthesis of Modern Frontier Data Curation Systems
 Modern LLM post-training collapses when trained on uncurated, repetitive, or contaminated web corpora (Shumailov et al., Nature 2024). Frontier AI labs have converged on standardized, multi-stage curation pipelines:
@@ -554,7 +570,7 @@ Following Dodge et al. (2021), given a held-out benchmark evaluation suite $\mat
    $$\text{Contaminated}(d) = \begin{cases} 1 & \text{if } \exists g \in \text{13-grams}(d) \text{ s.t. } g \in \mathcal{G}_{13}(\mathcal{B}) \\ 0 & \text{otherwise} \end{cases}$$
 Any contaminated document is immediately rejected to prevent false benchmark memorization during SFT and RL post-training.
 
-### 6.8 Phase 2.3: Graph-Based Connected Components Cluster Deduplication & Canonical Election
+### 7.8 Section 7.3: Graph-Based Connected Components Cluster Deduplication & Canonical Election
 
 #### 1. The Transitive Redundancy Problem in Streaming Deduplication
 When documents stream into an LLM ingestion pipeline, evaluating near-duplicates on an arrival basis suffers from **order dependency**:
@@ -603,7 +619,7 @@ flowchart TD
 
 ---
 
-### 6.9 Phase 2.4: Experience Replay Buffer & Zero-RAM Binary Serialization Pipeline
+### 7.9 Section 7.4: Experience Replay Buffer & Zero-RAM Binary Serialization Pipeline
 
 #### 1. The Convex Combination Experience Replay Mixture
 To protect the LLM against catastrophic forgetting and model collapse (Shumailov et al., Nature 2024), newly ingested web data is never trained in isolation. Training mini-batches are drawn from a convex combination distribution:
@@ -642,7 +658,7 @@ flowchart TD
 
 ---
 
-# Step 7: Milestone 3 — Post-Training Alignment & Parameter-Efficient Continual Fine-Tuning (SFT & LoRA)
+# Chapter 8: Supervised Fine-Tuning (SFT) & Low-Rank Adaptation (LoRA)
 
 ### 7.1 Comprehensive Academic Literature & Landmark Post-Training Paradigms
 
@@ -948,7 +964,7 @@ flowchart TD
 
 ---
 
-### 7.5 Concrete Phased Implementation Plan for Milestone 3 (P3)
+### 8.5 Architectural Decomposition & Module Roadmap
 
 To ensure **10/10 production excellence**, zero memory leaks, and 100% test pass rates, Milestone 3 is partitioned into four modular, independently testable phases:
 
@@ -966,7 +982,7 @@ flowchart LR
 
 ---
 
-#### Phase 3.1: Instruction Data Harmonization, ChatML Templating & Completion Masking Engine
+#### Section 8.1: Instruction Data Harmonization, ChatML Templating & Completion Masking Engine
 - **Objective**: Build an instruction dataset handler and collator that transforms raw dialogue into token sequences with completion-only loss masking.
 - **Key Modules**:
   1. `training/m3_sft/prompt.py`:
@@ -982,7 +998,7 @@ flowchart LR
 
 ---
 
-#### Phase 3.2: Native PyTorch LoRA Adapter Architecture & Injection Engine
+#### Section 8.2: Native PyTorch LoRA Adapter Architecture & Injection Engine
 - **Objective**: Implement a clean, zero-dependency, native PyTorch low-rank adaptation module with automated transformer injection and weight merging.
 - **Key Modules**:
   1. `training/m3_sft/lora.py`:
@@ -1000,7 +1016,7 @@ flowchart LR
 
 ---
 
-#### Phase 3.3: Supervised Fine-Tuning (SFT) Training Loop & Optimizer Engine
+#### Section 8.3: Supervised Fine-Tuning (SFT) Training Loop & Optimizer Engine
 - **Objective**: Build an industrial-strength SFT training engine optimized for Apple Silicon MPS with bfloat16 mixed precision, cosine learning rate scheduling, and adapter checkpointing.
 - **Key Modules**:
   1. `training/m3_sft/trainer.py`:
@@ -1019,7 +1035,7 @@ flowchart LR
 
 ---
 
-#### Phase 3.4: Anti-Catastrophic Forgetting & Regression Gate (Continuous Evaluation)
+#### Section 8.4: Anti-Catastrophic Forgetting & Regression Gate (Continuous Evaluation)
 - **Objective**: Build an automated regression verification suite that evaluates adapted models against domain knowledge acquisition and anchor capability preservation.
 - **Key Modules**:
   1. `training/m3_sft/evaluator.py`:
@@ -1051,7 +1067,7 @@ A dedicated master test file `tests/test_m3_sft.py` will be registered with `tes
 
 ---
 
-### 7.6 Phase 3.1: Instruction Data Harmonization, ChatML Templating & Completion Masking Engine
+### 8.6 Section 8.1: Instruction Data Harmonization, ChatML Templating & Completion Masking Engine
 
 #### 1. Academic & Engineering Foundations for Instruction Curation
 
@@ -1226,7 +1242,7 @@ class HarmonizedSFTDataset(torch.utils.data.Dataset):
 
 ---
 
-### 7.7 Phase 3.2: Native PyTorch LoRA Adapter Architecture & Model Injection Engine
+### 8.7 Section 8.2: Native PyTorch LoRA Adapter Architecture & Model Injection Engine
 
 #### 1. Academic & Industry Foundations for Parameter-Efficient Adaptation
 
@@ -1456,7 +1472,7 @@ def load_adapter_weights(model: nn.Module, adapter_path: str | Path) -> None:
 
 ---
 
-### 7.8 Phase 3.3: Supervised Fine-Tuning (SFT) Training Loop & Optimizer Engine
+### 8.8 Section 8.3: Supervised Fine-Tuning (SFT) Training Loop & Optimizer Engine
 
 #### 1. Academic & Industry Literature on Instruction Training Dynamics
 
@@ -1640,7 +1656,7 @@ class SFTTrainer:
 
 ---
 
-### 7.9 Phase 3.4: Anti-Catastrophic Forgetting Evaluator, Regression Gate & Turnkey Continual SFT Orchestrator
+### 8.9 Section 8.4: Anti-Catastrophic Forgetting Evaluator, Regression Gate & Turnkey Continual SFT Orchestrator
 
 #### 1. Academic & Industry Literature on Continual Post-Training Evaluation
 
@@ -1843,7 +1859,7 @@ The continual learning architecture establishes zero-glue bidirectional intercon
 
 ---
 
-# Step 8: Milestone 4 — Evaluation, Citation Verification, & Autonomous Release Gate
+# Chapter 9: Benchmark Evaluation, Citation Faithfulness, & Autonomous Release Gating
 
 > **Objective**: Implement a mathematically sound, statistically robust, and automated evaluation and release qualification harness. The system must verify candidate model checkpoints against pre-trained baselines across domain question answering, factual citation fidelity, and regression safety boundaries before hot-swap deployment or promotion to Milestone 5 preference learning.
 
@@ -1982,7 +1998,7 @@ Upon `REJECTED`, the failure diagnosis records the offending violation mode:
 
 ---
 
-### 8.4 Multi-Phase Architectural Decomposition (Phases 4.1 – 4.4)
+### 9.4 Architectural Decomposition & Module Specifications
 
 Milestone 4 is decomposed into four sequential, interconnected engineering phases:
 
@@ -2218,7 +2234,7 @@ class AutonomousReleaseGate:
 
 ---
 
-### 8.8 Phase 4.1 Specification: Golden Domain Benchmark Suite & Schema Contracts
+### 9.8 Section 9.1 Specification: Golden Domain Benchmark Suite & Schema Contracts
 
 #### 1. Theoretical Rationale & The Four-Bucket Stratification
 To evaluate candidate checkpoints with statistical integrity and prevent deceptive overconfidence from generic benchmarks (MMLU, GSM8k), Phase 4.1 establishes a curated, versioned **Golden Domain Benchmark Suite** ($N = 30$ cases) grounded in the technical curriculum of the model (ML Theory, Transformers, PEFT, Continual Systems).
@@ -2356,7 +2372,7 @@ class GoldenBenchmarkSuite:
 
 ---
 
-### 8.9 Phase 4.2 Specification: Citation Extraction, Token Faithfulness, & RAG Triad Verifier
+### 9.9 Section 9.2 Specification: Citation Extraction, Token Faithfulness, & RAG Triad Verifier
 
 #### 1. Theoretical Rationale & The Attribution Verification Problem
 In production generative systems with retrieval-augmented generation (RAG) and continual learning, language models often generate syntactically convincing, fluent answers decorated with fictitious citations or superficial attribution tags (e.g., placing `[1]` next to a fact that appears nowhere in document 1).
@@ -2530,7 +2546,7 @@ class CitationVerifier:
 
 ---
 
-### 8.10 Phase 4.3: LLM-as-a-Judge Engine, Rubric Calibration, & Systematic Bias Mitigation
+### 9.10 Section 9.3: LLM-as-a-Judge Engine, Rubric Calibration, & Systematic Bias Mitigation
 
 #### 1. Theoretical Motivation & Foundations
 In automated LLM alignment and continual post-training workflows, standard n-gram overlap metrics (BLEU, ROUGE) are well-known to correlate poorly with human judgments of reasoning depth, conceptual correctness, and stylistic coherence. Zheng et al. (NeurIPS 2023, *"Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena"*) demonstrated that strong LLMs acting as automated judges achieve $>80\%$ agreement with human domain experts.
@@ -2763,7 +2779,7 @@ class LLMJudge:
 
 ---
 
-### 8.11 Phase 4.4: Statistical Release Gating, Bootstrap Resampling, Hypothesis Testing, & Autonomous Rollback Orchestration
+### 9.11 Section 9.4: Statistical Release Gating, Bootstrap Resampling, Hypothesis Testing, & Autonomous Rollback Orchestration
 
 #### 1. Theoretical Motivation & Foundations
 In Continual Learning and autonomous post-training systems, evaluating whether a new checkpoint $M_{\text{cand}}$ should be promoted to production over a verified baseline $M_{\text{base}}$ cannot rely on naive scalar point estimates (e.g. "mean score rose from 4.12 to 4.15"). Such point estimates suffer from severe statistical vulnerability:
@@ -3008,7 +3024,7 @@ class RollbackOrchestrator:
 
 ---
 
-# Step 9: Milestone 5 — Preference Learning, Direct Preference Optimization (DPO), & Reinforcement Learning with Verifiable Rewards (GRPO)
+# Chapter 10: Preference Learning, Direct Preference Optimization (DPO), & Reinforcement Learning (PPO & GRPO)
 
 > **Objective**: Implement a mathematically sound, production-grade preference optimization and reinforcement learning post-training framework. The system transitions the model from supervised imitation (SFT, Milestone 3) to preference alignment and reasoning with verifiable rewards without human annotation bottlenecks. It encompasses paired Bradley-Terry reward modeling, Direct Preference Optimization (DPO), rule-based verifiable reward synthesis (citations, formatting, brevity), and critic-free Group Relative Policy Optimization (GRPO).
 
@@ -3218,11 +3234,11 @@ flowchart TD
 
 ---
 
-### 9.4 Milestone 5 Phased Execution Roadmap
+### 10.4 Preference & Reinforcement Learning Execution Roadmap
 
 To improve implementation quality, mathematical verification, memory-mapped token loading, and test coverage, Milestone 5 is decomposed into five distinct execution phases:
 
-#### Phase 5.1: Preference Data Contracts, Pairwise Bradley-Terry Reward Modeling, & Dataset Pipeline
+#### Section 10.1: Preference Data Contracts, Pairwise Bradley-Terry Reward Modeling, & Dataset Pipeline
 - **Deliverables**:
   - `training/m5_preference/schemas.py`: Pydantic V2 & dataclass schemas (`PreferencePairSchema`, `PreferenceSample`).
   - `training/m5_preference/dataset.py`: `PreferenceDataset` with paired chosen/rejected ChatML collation and loss masking.
@@ -3230,13 +3246,13 @@ To improve implementation quality, mathematical verification, memory-mapped toke
   - `training/m5_preference/reward_trainer.py`: Supervised reward model training loop with margin calibration.
 - **Verification**: Unit tests covering loss masking, Bradley-Terry gradient dynamics, margin separability, and classification accuracy.
 
-#### Phase 5.2: Direct Preference Optimization (DPO) Engine
+#### Section 10.2: Direct Preference Optimization (DPO) Engine
 - **Deliverables**:
   - `training/m5_preference/dpo_loss.py`: Numerically stable `DPOLoss` with log-sigmoid, margin offset, and implicit reward tracking.
   - `training/m5_preference/dpo_trainer.py`: Production `DPOTrainer` with reference model caching, LoRA parameter-efficient tuning, gradient accumulation, and evaluation logging.
 - **Verification**: Unit tests verifying loss symmetry, implicit reward monotonicity ($r(y_w) > r(y_l)$), reference policy freezing, and convergence on domain preference pairs.
 
-#### Phase 5.3: Verifiable Rule-Based & Multi-Objective Reward Functions
+#### Section 10.3: Verifiable Rule-Based & Multi-Objective Reward Functions
 - **Deliverables**:
   - `training/m5_preference/rewards/citation_reward.py`: Grounding & citation syntax verifier using M4 `CitationVerifier`.
   - `training/m5_preference/rewards/format_reward.py`: Structural reasoning (`<think>...</think>`) and ChatML syntax validator.
@@ -3244,14 +3260,14 @@ To improve implementation quality, mathematical verification, memory-mapped toke
   - `training/m5_preference/rewards/composite.py`: Multi-objective normalized reward aggregator with customizable weights.
 - **Verification**: Unit tests for reward bounds, citation penalties, format enforcement, and length penalty monotonicity.
 
-#### Phase 5.4: Group Relative Policy Optimization (GRPO) Engine
+#### Section 10.4: Group Relative Policy Optimization (GRPO) Engine
 - **Deliverables**:
   - `training/m5_preference/grpo_sampler.py`: Parallel group autoregressive rollout generator with nucleus/temperature controls.
   - `training/m5_preference/grpo_loss.py`: Critic-free group advantage computation, PPO surrogate clipping, and per-token unbiased KL divergence estimation.
   - `training/m5_preference/grpo_trainer.py`: Online RL loop with rollout buffering, group normalization, and policy gradient updates.
 - **Verification**: Unit tests for group advantage normalization ($\sum \hat{A}_i = 0$), clipping behavior, critic elimination memory verification, and policy improvement.
 
-#### Phase 5.5: Master Triad Comparative Evaluation, Gating, & Release Integration
+#### Section 10.5: Master Triad Comparative Evaluation, Gating, & Release Integration
 - **Deliverables**:
   - `training/m5_preference/triad_evaluator.py`: Comparative harness benchmarking SFT vs DPO vs GRPO on M4.1 Golden Benchmark Suite.
   - Integration with M4.4 `StatisticalReleaseGate` and `RollbackOrchestrator` to qualify preference-aligned checkpoints for M6 serving.
@@ -3260,7 +3276,7 @@ To improve implementation quality, mathematical verification, memory-mapped toke
 
 ---
 
-### 9.5 Phase 5.1: Preference Data Contracts, Pairwise Bradley-Terry Reward Modeling, & Dataset Pipeline
+### 10.5 Section 10.1: Preference Data Contracts, Pairwise Bradley-Terry Reward Modeling, & Dataset Pipeline
 
 #### 1. Theoretical Motivation & Foundations
 In supervised fine-tuning (Milestone 3), the model learns an unconditional distribution over demonstrations:
@@ -3454,7 +3470,7 @@ class RewardTrainer:
 
 ---
 
-### 9.6 Phase 5.2: Direct Preference Optimization (DPO) Engine & Loss Formulation
+### 10.6 Section 10.2: Direct Preference Optimization (DPO) Engine & Loss Formulation
 
 #### 1. Theoretical Foundation & Literature Survey
 Direct Preference Optimization (Rafailov et al., NeurIPS 2023) eliminates the need for fitting an explicit intermediate reward model $r_\psi(x, y)$ and performing complex reinforcement learning loops (e.g. PPO, policy gradients) by proving an analytical equivalence between the Bradley-Terry preference model and the closed-form solution to the KL-constrained RL objective.
@@ -3615,7 +3631,7 @@ tests/
 
 ---
 
-### 9.7 Phase 5.3: Proximal Policy Optimization (PPO) Actor-Critic RL Engine & Generalized Advantage Estimation (GAE)
+### 10.7 Section 10.3: Proximal Policy Optimization (PPO) Actor-Critic RL Engine & Generalized Advantage Estimation (GAE)
 
 #### 1. Theoretical Foundation & Literature Survey
 While Direct Preference Optimization (DPO) optimizes offline preference datasets in closed form, online Reinforcement Learning from Human/AI Feedback via **Proximal Policy Optimization (PPO)** remains the foundational engine for exploratory policy improvement (Ouyang et al., 2022; Schulman et al., 2017). PPO enables the language model to explore completions beyond the fixed training corpus, receive step-level credit assignment, and continually optimize against dynamic reward models or verifiable execution verifiers.
@@ -3762,7 +3778,7 @@ tests/
 
 ---
 
-### 9.8 Phase 5.4: Group Relative Policy Optimization (GRPO - DeepSeek-R1 Style) Engine & Verifiable Rewards
+### 10.8 Section 10.4: Group Relative Policy Optimization (GRPO - DeepSeek-R1 Style) Engine & Verifiable Rewards
 
 #### 1. Theoretical Foundation & Literature Survey
 Group Relative Policy Optimization (GRPO), introduced in **DeepSeekMath** (Shao et al., 2024) and foundational to **DeepSeek-R1** (Guo et al., 2025), fundamentally reimagines Reinforcement Learning for Large Language Models by eliminating the separate Critic value network $V_\phi$ used in traditional PPO.
@@ -3889,7 +3905,7 @@ tests/
 
 ---
 
-### 9.9 Phase 5.5: Unified Alignment Benchmark Suite, Dynamic Engine Selection, & Full System Integration
+### 10.9 Section 10.5: Unified Alignment Benchmark Suite, Dynamic Engine Selection, & Full System Integration
 
 #### 1. Theoretical Foundation & Comparative Analysis of Alignment Paradigms
 Modern post-training alignment encompasses multiple distinct methodologies with contrasting trade-offs across sample efficiency, VRAM requirements, and robustness against reward hacking:
@@ -3981,7 +3997,7 @@ tests/
 
 ---
 
-# Step 10: Milestone 6 — Autonomous Continual Learning Loop Orchestrator, Hybrid Retrieval, & Serving Gateway
+# Chapter 11: Continual Learning Loop Orchestration, Hybrid Retrieval, & Zero-Downtime Serving
 
 #### 1. Theoretical Foundation & Literature Survey
 Milestone 6 integrates all previous capabilities (M0 hardware contracts, M1 MiniGPT, M2 web scraping & MinHash, M3 SFT & LoRA, M4 evaluation & statistical gating, M5 alignment & verifiable rewards) into an **autonomous, closed-loop continual learning system**.
@@ -4070,7 +4086,7 @@ To deploy new candidate weights $\theta_{\text{cand}}$ without dropping in-fligh
 
 ---
 
-### 10.1 Phase 6.1: Hybrid Retrieval Engine (BM25 + Dense Semantic Fusion & Reciprocal Rank Fusion)
+### 11.1 Section 11.1: Hybrid Retrieval Engine (BM25 + Dense Semantic Fusion & Reciprocal Rank Fusion)
 
 #### 1. Theoretical Foundation & Literature Survey
 Retrieval-Augmented Generation (RAG) grounds language model responses on authoritative external evidence, mitigating hallucinations and ensuring factual veracity (Lewis et al., NeurIPS 2020; Guu et al., ICML 2020).
@@ -4158,7 +4174,7 @@ tests/
 
 ---
 
-### 10.2 Phase 6.2: Experience Replay Buffer Manager (70% Golden Anchor / 30% Streaming Web + Model Collapse Guards)
+### 11.2 Section 11.2: Experience Replay Buffer Manager (70% Golden Anchor / 30% Streaming Web + Model Collapse Guards)
 
 #### 1. Theoretical Foundation & Literature Survey
 In an autonomous continual learning lifecycle, training an autoregressive model sequentially on newly ingested web data poses two existential threats:
@@ -4403,7 +4419,7 @@ apps/
 
 ---
 
-### 10.4 Phase 6.4: High-Throughput FastAPI Serving Gateway & Zero-Downtime Atomic Hot-Swap
+### 11.4 Section 11.4: High-Throughput FastAPI Serving Gateway & Zero-Downtime Atomic Hot-Swap
 
 #### 1. Theoretical Foundation & Literature Survey
 The intended serving design separates network concurrency from model execution. No claim of 100+ requests/second or a specific latency is made without a reproducible load test.
@@ -4499,7 +4515,7 @@ tests/
 
 ---
 
-# Research Verification and Implementation Status
+# Appendix A: Empirical Verification & Implementation Status
 
 This section separates published results from implementation choices and records which parts of the architecture are exercised by the current code. Numerical thresholds and performance statements are not treated as research results unless the cited source measures them in the same setting.
 

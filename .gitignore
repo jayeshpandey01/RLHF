@@ -45,3 +45,9 @@ htmlcov/
 # Research Gap Analysis & Audit
 actual_code_gaps/
 
+# Milestones Documentation
+milestone.md
+milestone/
+milestones/
+
+
