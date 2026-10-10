@@ -38,8 +38,12 @@ class FakeKnowledge:
 
 
 class FakeTrainingWorker:
-    def train_evaluate_and_package(self):
-        return {"status": "BLOCKED", "decision": "BLOCK_RELEASE"}
+    def train_evaluate_and_package(self, baseline_model=None):
+        return {
+            "status": "BLOCKED",
+            "decision": "BLOCK_RELEASE",
+            "baseline_model": baseline_model,
+        }
 
 
 class TestLiveLearningAPI(unittest.TestCase):
@@ -119,6 +123,36 @@ class TestLiveLearningAPI(unittest.TestCase):
         self.assertEqual(job_response.status_code, 200)
         self.assertEqual(job_response.json()["status"], "BLOCKED")
         self.assertEqual(manager.model_version, 1)
+
+    def test_training_job_evaluates_against_current_active_ollama_model(self):
+        knowledge = FakeKnowledge(indexed=1, web_count=5)
+        jobs = LearningJobManager()
+        worker = FakeTrainingWorker()
+        model = "rlhf-active-model"
+        orchestrator = self._orchestrator(model)
+        manager = ModelServingManager(active_model=model, anchor_model=settings.DEFAULT_MODEL)
+        client = TestClient(
+            create_app(
+                orchestrator=orchestrator,
+                serving_manager=manager,
+                live_knowledge=knowledge,
+                training_worker=worker,
+                learning_jobs=jobs,
+            )
+        )
+
+        response = client.post("/query", json={"query": "How does DPO work?", "top_k": 1})
+        self.assertEqual(response.status_code, 200)
+        job_id = response.json()["learning_job_id"]
+
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            job_response = client.get(f"/learning/jobs/{job_id}")
+            if job_response.json()["status"] not in {"QUEUED", "RUNNING"}:
+                break
+            time.sleep(0.01)
+
+        self.assertEqual(job_response.json()["result"]["baseline_model"], model)
 
     def test_live_knowledge_curates_persists_indexes_and_reloads(self):
         with tempfile.TemporaryDirectory() as temp_dir:

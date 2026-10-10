@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -42,16 +43,39 @@ def _read_web_examples(corpus_path: Path) -> list[tuple[str, str]]:
             except (json.JSONDecodeError, KeyError, AttributeError) as exc:
                 raise ValueError(f"Invalid corpus record on line {line_number}: {exc}") from exc
             if text and url:
-                excerpt = text[:1600]
+                instruction = document.get("instruction")
+                answer = document.get("answer")
+                if instruction is None and answer is None:
+                    continue
+                if (
+                    not isinstance(instruction, str)
+                    or not instruction.strip()
+                    or not isinstance(answer, str)
+                    or not answer.strip()
+                ):
+                    raise ValueError(
+                        f"Corpus record on line {line_number} must provide non-empty string "
+                        "'instruction' and 'answer' fields together."
+                    )
+                if document.get("supervision_status") != "reviewed":
+                    raise ValueError(
+                        f"Corpus record on line {line_number} must mark its supervision_status "
+                        "as 'reviewed' before it can be used for SFT."
+                    )
+
+                excerpt = text[:600]
+                normalized_answer = " ".join(answer.split()).casefold()
+                normalized_source = " ".join(text.split()).casefold()
+                if normalized_answer == normalized_source:
+                    raise ValueError(
+                        f"Corpus record on line {line_number} uses the complete source as its answer."
+                    )
                 examples.append(
                     (
-                        "Summarize the source accurately and cite it. "
-                        f"Source URL: {url}\n\n{excerpt}",
-                        f"{excerpt}\n\nSource: {url}",
+                        f"{instruction.strip()}\n\nSource URL: {url}\n\n{excerpt}",
+                        f"{answer.strip()}\n\nSource: {url}",
                     )
                 )
-    if not examples:
-        raise ValueError("The collected knowledge corpus contains no usable documents.")
     return examples
 
 
@@ -72,8 +96,21 @@ class HuggingFaceLoRAWorker:
         )
         self.ollama_url = (ollama_url or settings.OLLAMA_BASE_URL).rstrip("/")
 
-    def train_evaluate_and_package(self) -> dict[str, Any]:
+    def train_evaluate_and_package(
+        self, baseline_model: str | None = None
+    ) -> dict[str, Any]:
         """Run CPU-safe LoRA SFT and return a deployable Ollama tag only on gate approval."""
+        web = _read_web_examples(self.corpus_path)
+        if not web:
+            return {
+                "status": "BLOCKED",
+                "reason": "NO_VALIDATED_WEB_SUPERVISION",
+                "detail": (
+                    "Raw source text remains available to retrieval but cannot be used as an "
+                    "SFT target. Add reviewed instruction/answer fields to web corpus records."
+                ),
+            }
+
         try:
             import torch
             from peft import LoraConfig, get_peft_model
@@ -125,7 +162,7 @@ class HuggingFaceLoRAWorker:
                         full,
                         add_special_tokens=False,
                         truncation=True,
-                        max_length=384,
+                        max_length=512,
                     )["input_ids"]
                     if len(token_ids) > len(prefix_ids):
                         labels = [-100] * min(len(prefix_ids), len(token_ids))
@@ -166,9 +203,8 @@ class HuggingFaceLoRAWorker:
                 "labels": labels,
                 "attention_mask": attention_mask,
             }
-
         anchor = _anchor_examples()
-        web = _read_web_examples(self.corpus_path)
+        anchor = _anchor_examples()
         pairs = [
             (anchor[index % len(anchor)] if index % 10 < 7 else web[index % len(web)])
             for index in range(max(len(anchor), len(web)) * 10)
@@ -218,9 +254,18 @@ class HuggingFaceLoRAWorker:
         tokenizer.save_pretrained(adapter_dir)
 
         suite = GoldenBenchmarkSuite.load_default_suite()
-        baseline_scores = self._score_ollama_baseline(suite)
+        baseline_model = baseline_model or os.getenv("OLLAMA_BASELINE_MODEL", settings.DEFAULT_MODEL)
+        baseline_scores = self._score_ollama_baseline(suite, baseline_model=baseline_model)
         candidate_scores = self._score_candidate(model, tokenizer, suite)
-        gate_report = StatisticalReleaseGate().evaluate_gate(
+        paired_delta_std = os.getenv("HF_GATE_PAIRED_DELTA_STD")
+        min_improvement_delta = os.getenv("HF_GATE_MIN_IMPROVEMENT_DELTA")
+        gate = StatisticalReleaseGate(
+            paired_delta_std=float(paired_delta_std) if paired_delta_std is not None else None,
+            min_improvement_delta=(
+                float(min_improvement_delta) if min_improvement_delta is not None else None
+            ),
+        )
+        gate_report = gate.evaluate_gate(
             suite,
             candidate_scores=candidate_scores,
             baseline_scores=baseline_scores,
@@ -238,6 +283,7 @@ class HuggingFaceLoRAWorker:
                 "gate_report": str(report_path),
                 "adapter": str(adapter_dir),
                 "ollama_model": None,
+                "baseline_model": baseline_model,
             }
 
         model = model.merge_and_unload()
@@ -264,6 +310,7 @@ class HuggingFaceLoRAWorker:
             "adapter": str(adapter_dir),
             "merged_model": str(merged_dir),
             "ollama_model": model_tag,
+            "baseline_model": baseline_model,
         }
 
     def _probe_candidate(self, model_tag: str) -> None:
@@ -284,17 +331,20 @@ class HuggingFaceLoRAWorker:
                 f"Ollama created candidate {model_tag}, but its readiness probe returned no answer."
             )
 
-    def _score_ollama_baseline(self, suite: GoldenBenchmarkSuite) -> dict[str, float]:
+    def _score_ollama_baseline(
+        self, suite: GoldenBenchmarkSuite, baseline_model: str | None = None
+    ) -> dict[str, float]:
+        model_name = baseline_model or os.getenv("OLLAMA_BASELINE_MODEL", settings.DEFAULT_MODEL)
         scores = {}
         for case in suite.cases:
             prompt = self._benchmark_prompt(case)
             response = httpx.post(
                 f"{self.ollama_url}/api/chat",
                 json={
-                    "model": settings.DEFAULT_MODEL,
+                    "model": model_name,
                     "messages": [{"role": "user", "content": prompt}],
                     "stream": False,
-                    "options": {"temperature": 0},
+                    "options": {"temperature": 0, "num_predict": 120},
                 },
                 timeout=settings.OLLAMA_TIMEOUT_SECONDS,
             )
@@ -324,6 +374,7 @@ class HuggingFaceLoRAWorker:
                     max_new_tokens=120,
                     do_sample=False,
                     pad_token_id=tokenizer.pad_token_id,
+                    eos_token_id=tokenizer.eos_token_id,
                 )
             answer = tokenizer.decode(
                 output[0][input_ids.shape[1]:],
@@ -342,4 +393,33 @@ class HuggingFaceLoRAWorker:
 
     @staticmethod
     def _case_score(case, answer: str) -> float:
-        return 4.0 * case.evaluate_keyword_coverage(answer) + case.evaluate_citation_presence(answer)
+        """Score keyword recall, citation presence, and lexical context support in [0.0, 5.0]."""
+        if not answer.strip():
+            return 0.0
+
+        kw_cov = case.evaluate_keyword_coverage(answer)
+        cite_pres = case.evaluate_citation_presence(answer)
+        ignored = {
+            "about", "after", "also", "and", "are", "because", "been", "being", "but",
+            "for", "from", "has", "have", "into", "its", "more", "not", "only", "that",
+            "the", "their", "then", "there", "these", "this", "those", "through", "was",
+            "were", "which", "with",
+        }
+
+        def content_counts(text: str) -> dict[str, int]:
+            counts: dict[str, int] = {}
+            for token in re.findall(r"[a-z0-9]+", text.lower()):
+                if len(token) > 2 and token not in ignored:
+                    counts[token] = counts.get(token, 0) + 1
+            return counts
+
+        answer_counts = content_counts(answer)
+        context_counts = content_counts(case.ground_truth_context)
+        answer_token_count = sum(answer_counts.values())
+        supported_token_count = sum(
+            min(count, context_counts.get(token, 0))
+            for token, count in answer_counts.items()
+        )
+        context_support = supported_token_count / answer_token_count if answer_token_count else 0.0
+        score = 2.5 * kw_cov + cite_pres + 1.5 * context_support
+        return round(min(5.0, max(0.0, score)), 4)

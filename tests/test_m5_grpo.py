@@ -4,6 +4,7 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import torch
 
@@ -218,6 +219,76 @@ class TestM5GRPO(unittest.TestCase):
             orig_p, _ = self.actor(input_ids[:1], return_all_logits=True)
             loaded_p, _ = fresh_actor(input_ids[:1], return_all_logits=True)
             self.assertTrue(torch.allclose(orig_p, loaded_p, atol=1e-4))
+
+    def test_grpo_sample_group_rollouts_eos_stopping_and_empty_validation(self):
+        """Verify sample_group_rollouts validates empty prompts and generates group trajectories."""
+        trainer = GRPOTrainer(actor=self.actor, group_size=4, device=torch.device("cpu"))
+
+        # Empty prompts validation
+        with self.assertRaises(ValueError):
+            trainer.sample_group_rollouts(prompts=[], tokenizer=self.tokenizer)
+
+        # Set an EOS token
+        eos_id = self.tokenizer.encode("!")[0]
+        self.tokenizer.eos_token_id = eos_id
+
+        # Sample group rollouts for 2 prompts: 2 * 4 = 8 trajectories
+        padded_ids, attn_mask, prompt_lens, completions = trainer.sample_group_rollouts(
+            prompts=["What is 2+2?", "Capital of France?"],
+            tokenizer=self.tokenizer,
+            max_new_tokens=16,
+            eos_token_id=eos_id,
+        )
+
+        self.assertEqual(padded_ids.shape[0], 8)
+        self.assertEqual(attn_mask.shape[0], 8)
+        self.assertEqual(len(completions), 8)
+        self.assertEqual(prompt_lens.shape[0], 8)
+
+    def test_grpo_step_on_prompts_end_to_end(self):
+        """Verify step_on_prompts runs full online group rollout-to-update cycle."""
+        trainer = GRPOTrainer(
+            actor=self.actor,
+            group_size=4,
+            optimizer=torch.optim.AdamW(self.actor.parameters(), lr=1e-3),
+            device=torch.device("cpu"),
+        )
+
+        reward_engine = VerifiableRewardEngine()
+
+        def dummy_reward_fn(completions: list[str]) -> list[float]:
+            # Assign rewards based on length or content
+            return [float(len(c) % 3) for c in completions]
+
+        metrics = trainer.step_on_prompts(
+            prompts=["Math puzzle", "Logic query"],
+            tokenizer=self.tokenizer,
+            reward_fn=dummy_reward_fn,
+            max_new_tokens=16,
+        )
+
+        self.assertIn("loss", metrics)
+        self.assertIn("policy_loss", metrics)
+        self.assertIn("clip_fraction", metrics)
+        self.assertTrue(torch.isfinite(torch.tensor(metrics["loss"])))
+
+    def test_grpo_step_rejects_reward_count_mismatch(self):
+        trainer = GRPOTrainer(actor=self.actor, group_size=4, device=torch.device("cpu"))
+        sequences = torch.randint(0, len(self.tokenizer), (4, 8))
+        mask = torch.ones_like(sequences)
+        prompt_lengths = torch.full((4,), 4, dtype=torch.long)
+
+        with patch.object(
+            trainer,
+            "sample_group_rollouts",
+            return_value=(sequences, mask, prompt_lengths, ["a", "b", "c", "d"]),
+        ):
+            with self.assertRaisesRegex(ValueError, "exactly 4"):
+                trainer.step_on_prompts(
+                    prompts=["prompt"],
+                    tokenizer=self.tokenizer,
+                    reward_fn=lambda completions: [1.0],
+                )
 
 
 if __name__ == "__main__":

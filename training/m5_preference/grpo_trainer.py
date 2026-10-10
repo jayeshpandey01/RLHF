@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Sequence, Union
+from typing import Callable, Optional, Sequence, Union
 
 import torch
 import torch.nn as nn
@@ -298,8 +298,13 @@ class GRPOTrainer:
             eos_token_id=eos_token_id,
         )
 
-        scores = reward_fn(completions)
-        rewards_tensor = torch.tensor(scores, dtype=torch.float32, device=self.device)
+        rewards_tensor = torch.as_tensor(reward_fn(completions), dtype=torch.float32, device=self.device)
+        if rewards_tensor.shape != (len(completions),):
+            raise ValueError(
+                f"reward_fn must return exactly {len(completions)} scalar rewards."
+            )
+        if not torch.isfinite(rewards_tensor).all():
+            raise ValueError("reward_fn must return only finite scores.")
 
         group_batch = self.build_group_batch(
             input_ids=input_ids,
@@ -309,5 +314,3 @@ class GRPOTrainer:
         )
 
         return self.train_step(group_batch)
-
-

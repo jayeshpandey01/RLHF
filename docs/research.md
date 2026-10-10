@@ -39,7 +39,7 @@
 
 # Chapter 1: System Architecture & Continual Learning Topology
 
-### 0.1 End-to-End Dataflow Topology
+### 1.1 End-to-End Dataflow Topology
 ```
 [User Query] ──► [FastAPI Gateway] ──► [Hybrid Retrieval: BM25 + Dense] ──► [Ollama Serving]
                          │                                                   ▲
@@ -55,7 +55,7 @@
                   (MinHash LSH 80%)     (70% Anchor / 30% Web)
 ```
 
-### 0.2 Hybrid Retrieval Mathematics
+### 1.2 Hybrid Retrieval Mathematics
 For query $q$ and document $d \in \mathcal{D}$, an optional convex score fusion can combine lexical BM25 and cosine similarity:
 
 $$
@@ -74,16 +74,16 @@ $$
 \text{RRF}(d) = \sum_{m \in \{\text{lexical}, \text{dense}\}} \frac{1}{k + \text{rank}_m(d)}, \quad k = 60
 $$
 
-### 0.3 Model Promotion: Current Python Path and Ollama Gap
-The default gateway now collects/curates web documents on `/query`, persists them in `data/knowledge_corpus.jsonl`, indexes them for retrieval, and invokes the active Ollama model with citation instructions. `POST /trigger_learning` queues a separate Hugging Face PEFT/LoRA SFT worker. It evaluates the candidate against the Ollama anchor using the golden suite and `StatisticalReleaseGate`; only `PROCEED_DEPLOY` candidates are merged, passed to `ollama create`, and hot-swapped while in-flight gateway readers finish. Job state is process-local and available at `GET /learning/jobs/{job_id}`.
+### 1.3 Model Promotion: Current Python Path and Ollama Gap
+The default gateway collects and persists curated web documents in `data/knowledge_corpus.jsonl`, indexes them for retrieval, and invokes the active Ollama model with citation instructions. `POST /trigger_learning` queues a separate Hugging Face PEFT/LoRA SFT worker. Raw crawled text is retrieval evidence, not a supervised target: only records with `instruction`, `answer`, and `"supervision_status": "reviewed"` fields enter web SFT. If no such records exist, the worker reports `BLOCKED` rather than manufacturing pseudo-labels. The worker evaluates against the currently active Ollama model tag. Promotion also fails closed until `HF_GATE_PAIRED_DELTA_STD` (from an independent pilot) and `HF_GATE_MIN_IMPROVEMENT_DELTA` (a predeclared meaningful gain) are configured and estimated power is adequate. Only `PROCEED_DEPLOY` candidates are merged, passed to `ollama create`, and hot-swapped while in-flight gateway readers finish. Job state is process-local and available at `GET /learning/jobs/{job_id}`.
 
-This is a prototype path, not a production guarantee: source retrieval and answer quality still depend on live sources and the model; the statistical gate uses lexical benchmark metrics; model downloads/training/evaluation can be expensive on CPU; and the Ollama `FROM`-Safetensors packaging path must be exercised on the target Ollama build. Job state is not durable across server restarts, and the API has no authentication.
+This is a prototype path, not a production guarantee: source retrieval and answer quality still depend on live sources and the model; the release score uses keyword recall, citation presence, and lexical context support rather than claim-level semantic verification; model downloads/training/evaluation can be expensive on CPU; and the Ollama `FROM`-Safetensors packaging path must be exercised on the target Ollama build. DPO, PPO, and GRPO remain separate MiniGPT research trainers and are not connected to the served Hugging Face worker. Job state is not durable across server restarts, and the API has no authentication.
 
 ---
 
 # Chapter 2: Hardware Acceleration Strategy & Typed Data Contracts
 
-### 1.1 Hardware Strategy Formulation
+### 2.1 Hardware Strategy Formulation
 The host hardware detection layer dynamically determines optimal compute precision and execution parameters:
 - **Apple Silicon (Mac M-series MPS)**:
   - Backing: Metal Performance Shaders with Unified Memory Architecture (UMA).
@@ -92,7 +92,7 @@ The host hardware detection layer dynamically determines optimal compute precisi
 - **NVIDIA CUDA**: Selects `bfloat16` when supported and otherwise `float16`; TF32 and FlashAttention-2 are not enabled by the hardware strategy.
 - **CPU (Cloud Shell / Codespaces)**: Sets PyTorch's thread count to $\max(1, N_{\text{cores}} - 1)$.
 
-### 1.2 Schema Contracts (Pydantic V2)
+### 2.2 Schema Contracts (Pydantic V2)
 Strict data integrity contracts govern every transition:
 - `ScrapedDocumentSchema`: Raw HTML extraction payload with URL, text, and SHA-256 provenance hash.
 - `CleanedDocumentSchema`: Filtered text, language tag, shingle hashes, and quality scores.
@@ -103,7 +103,7 @@ Strict data integrity contracts govern every transition:
 
 # Chapter 3: Reverse-Mode Automatic Differentiation & Computational Graphs
 
-### 2.1 Landmark Research Papers Behind Autograd
+### 3.1 Landmark Research Papers Behind Autograd
 1. **Linnainmaa, S. (1970)**: *The representation of the cumulative rounding error of an algorithm as a Taylor expansion of the local rounding errors*. Master's thesis, Univ. of Helsinki. (Invented reverse-mode automatic differentiation).
 2. **Baur, W., & Strassen, V. (1983)**: *The complexity of partial derivatives*. Theoretical Computer Science, 22(3), 317-330.
    - **Baur-Strassen Theorem**: For any computational graph evaluating $f(x_1, \dots, x_n)$ in $C$ elementary operations, all $n$ partial derivatives $\nabla f$ can be evaluated in:
@@ -115,7 +115,7 @@ $$
    - This single theorem makes modern LLM training computationally feasible. Forward-mode would require $\mathcal{O}(n \cdot \text{Cost}(f))$, taking millennia for billions of parameters.
 3. **Rumelhart, D. E., Hinton, G. E., & Williams, R. J. (1986)**: *Learning representations by back-propagating errors*. Nature, 323, 533-536.
 
-### 2.2 Reverse DAG Traversal & The Multivariate Adjoint Equation
+### 3.2 Reverse DAG Traversal & The Multivariate Adjoint Equation
 A scalar computation $\mathcal{L} = f(x_1, \dots, x_n)$ forms a Directed Acyclic Graph (DAG) with nodes $\mathcal{V}$ and edges $\mathcal{E}$.
 For any node $v \in \mathcal{V}$, its adjoint $\bar{v} = \frac{\partial \mathcal{L}}{\partial v}$ is:
 
@@ -125,7 +125,7 @@ $$
 
 To evaluate $\bar{v}$ correctly, all children $u$ must evaluate before $v$. This necessitates processing nodes in **reverse topological order**, established via Depth-First Search (DFS).
 
-### 2.3 Elementary Operation Adjoints
+### 3.3 Elementary Operation Adjoints
 | Operation | Forward Pass | Adjoint $\bar{x} = \frac{\partial \mathcal{L}}{\partial x}$ | Adjoint $\bar{y} = \frac{\partial \mathcal{L}}{\partial y}$ |
 | :--- | :--- | :--- | :--- |
 | **Addition** | $z = x + y$ | $\bar{z}$ | $\bar{z}$ |
@@ -136,7 +136,7 @@ To evaluate $\bar{v}$ correctly, all children $u$ must evaluate before $v$. This
 | **Exponential** | $z = \exp(x)$ | $\bar{z} \cdot z$ | — |
 | **Natural Log** | $z = \ln(x)$ | $\bar{z} \cdot \frac{1}{x}$ | — |
 
-### 2.4 Taylor Series Central Difference Bound ($\mathcal{O}(h^2)$)
+### 3.4 Taylor Series Central Difference Bound ($\mathcal{O}(h^2)$)
 To verify analytical gradients against numerical approximation:
 
 $$
@@ -174,7 +174,7 @@ $$
 
 # Chapter 4: Statistical Language Modeling & Optimization Dynamics
 
-### 3.1 Bigram Statistical Baseline & Maximum Likelihood Estimation (MLE)
+### 4.1 Bigram Statistical Baseline & Maximum Likelihood Estimation (MLE)
 Given a sequence of discrete tokens $(w_1, \dots, w_N) \in \mathbb{V}^N$, the first-order Markov bigram assumption is:
 
 $$
@@ -201,7 +201,7 @@ $$
 
 For character-level TinyShakespeare, the empirical statistical bigram entropy is **$1.7524$ nats** ($\text{PPL} \approx 5.77$).
 
-### 3.2 Log-Sum-Exp Trick for Softmax Stability
+### 4.2 Log-Sum-Exp Trick for Softmax Stability
 Unnormalized logits $z \in \mathbb{R}^V$ evaluate probability:
 
 $$
@@ -220,7 +220,7 @@ $$
 
 Since $z_j - m \le 0$, $e^{z_j - m} \in (0, 1]$, making overflow impossible.
 
-### 3.3 Analytical Logit Gradient
+### 4.3 Analytical Logit Gradient
 
 $$
 \frac{\partial \mathcal{L}}{\partial z_i} = P_i - \mathbb{I}(i = y)
@@ -233,7 +233,7 @@ $$
 
 # Chapter 5: Causal Multi-Head Self-Attention & Algorithmic KV-Caching
 
-### 4.1 Scaled Dot-Product Attention Equation
+### 5.1 Scaled Dot-Product Attention Equation
 
 $$
 \text{Attention}(Q, K, V) = \text{softmax}\left(\frac{Q K^T}{\sqrt{d_k}} + M\right) V
@@ -241,7 +241,7 @@ $$
 
 where $Q, K, V \in \mathbb{R}^{B \times T \times d_k}$ and $M \in \mathbb{R}^{T \times T}$ is the causal lower-triangular mask.
 
-### 4.2 Proof: Variance Preservation under Scaling Factor $\frac{1}{\sqrt{d_k}}$
+### 5.2 Proof: Variance Preservation under Scaling Factor $\frac{1}{\sqrt{d_k}}$
 Let $q, k \in \mathbb{R}^{d_k}$ be independent zero-mean vectors with unit variance components:
 
 $$
@@ -267,7 +267,7 @@ $$
 \text{Var}\left(\frac{S}{\sqrt{d_k}}\right) = \frac{1}{d_k} \text{Var}(S) = \frac{d_k}{d_k} = 1 \quad \blacksquare
 $$
 
-### 4.3 Causal Masking Tensor Algebra
+### 5.3 Causal Masking Tensor Algebra
 
 $$
 M_{ij} = \begin{cases}
@@ -282,7 +282,7 @@ $$
 \lim_{M_{ij} \to -\infty} \frac{\exp(A_{ij} + M_{ij})}{\sum_k \exp(A_{ik} + M_{ik})} = 0, \quad \forall j > i
 $$
 
-### 4.4 KV-Cache Algorithmic Optimization
+### 5.4 KV-Cache Algorithmic Optimization
 In autoregressive decoding, token $T+1$ only requires computing query $Q_{T+1} \in \mathbb{R}^{1 \times d_k}$. Keys and values for tokens $1 \dots T$ remain unchanged because causal masking prevents future tokens from altering past keys.
 - **Naive Full Recomputation**: $\sum_{t=1}^N \mathcal{O}(t \cdot d) = \mathcal{O}(N^2 d)$ operations.
 - **KV-Cached Incremental Step**: $\mathcal{O}(1 \cdot d)$ per step, total $\mathcal{O}(N \cdot d)$ operations.
@@ -292,7 +292,7 @@ In autoregressive decoding, token $T+1$ only requires computing query $Q_{T+1} \
 
 # Chapter 6: Generative Pre-LayerNorm Transformer Architecture
 
-### 5.1 Pre-LayerNorm Gradient Highway Theorem (Xiong et al., 2020)
+### 6.1 Pre-LayerNorm Gradient Highway Theorem (Xiong et al., 2020)
 In Pre-LayerNorm:
 
 $$
@@ -313,7 +313,7 @@ $$
 
 The presence of the identity matrix $I$ ensures that even if sublayer transformations have vanishing gradients, the error signal propagates directly from output to token embeddings without attenuation. In Post-LN, the gradient is multiplied by $\prod_{l=1}^L J_{\text{LN}}$, which decays as $\mathcal{O}(L^{-1/2})$, causing training instability.
 
-### 5.2 Residual Variance Scaling ($1/\sqrt{2L}$) (Radford et al., 2019)
+### 6.2 Residual Variance Scaling ($1/\sqrt{2L}$) (Radford et al., 2019)
 Across $L$ transformer blocks with $2L$ residual additions:
 
 $$
@@ -326,7 +326,7 @@ $$
 W_{\text{residual}} \sim \mathcal{N}\left(0, \frac{\sigma_0^2}{2L}\right) = \frac{1}{\sqrt{2L}} \cdot \mathcal{N}(0, 0.02^2)
 $$
 
-### 5.3 Gaussian Error Linear Unit (GELU) (Hendrycks & Gimpel, 2016)
+### 6.3 Gaussian Error Linear Unit (GELU) (Hendrycks & Gimpel, 2016)
 
 $$
 \text{GELU}(x) = x \Phi(x) = x \int_{-\infty}^x \frac{1}{\sqrt{2\pi}} e^{-\frac{t^2}{2}} dt \approx 0.5 x \left(1 + \tanh\left(\sqrt{\frac{2}{\pi}} (x + 0.044715 x^3)\right)\right)
@@ -334,7 +334,7 @@ $$
 
 Unlike ReLU ($\max(0, x)$), which has a hard zero gradient for $x < 0$, GELU maintains small, smooth non-zero gradients for moderately negative values, preventing dead neurons.
 
-### 5.4 Weight Tying (Press & Wolf, 2017)
+### 6.4 Weight Tying (Press & Wolf, 2017)
 
 $$
 W_U \equiv W_E
@@ -342,7 +342,7 @@ $$
 
 The output linear unembedding layer shares its weight matrix with the input token embedding layer. This cuts vocabulary projection parameters by 50% and grounds token predictions in the semantic input embedding space.
 
-### 5.5 AdamW Decoupled Weight Decay (Loshchilov & Hutter, 2019)
+### 6.5 AdamW Decoupled Weight Decay (Loshchilov & Hutter, 2019)
 
 $$
 \theta_t = \theta_{t-1} - \eta_t \lambda \theta_{t-1} - \eta_t \frac{\hat{m}_t}{\sqrt{\hat{v}_t} + \epsilon}
@@ -351,7 +351,7 @@ $$
 - **2D Weight Matrices**: Linear and embedding layers receive weight decay $\lambda = 0.01$.
 - **1D Parameters**: LayerNorm scales $\gamma$, shifts $\beta$, and biases are explicitly excluded from weight decay ($\lambda = 0.0$) to prevent distortion of variance normalization.
 
-### 5.6 Information Entropy Bounds
+### 6.6 Information Entropy Bounds
 For character vocabulary $V = 65$:
 
 $$
@@ -365,7 +365,7 @@ $$
 
 # Chapter 7: Web Ingestion, MinHash LSH Deduplication, & Model Collapse Prevention
 
-### 6.1 Academic Literature & Theoretical Foundations
+### 7.1 Academic Literature & Theoretical Foundations
 
 Web data ingestion for LLM post-training sits at the boundary of information retrieval, probability theory, and statistical learning. The following foundational papers govern our architecture:
 
@@ -384,12 +384,12 @@ Web data ingestion for LLM post-training sits at the boundary of information ret
 7. **Carlini, N., et al. (2021)**: *Extracting Training Data from Large Language Models*. USENIX Security 2021.
    - Proved that duplicated text on the web is memorized at a rate exponential in its repetition count, creating privacy leakage and hallucination vulnerabilities.
 
-### 6.2 Top GitHub Frameworks Synthesized
+### 7.2 Top GitHub Frameworks Synthesized
 - **`adbar/trafilatura`**: Evaluated across web benchmark datasets as the highest-accuracy Python text extractor ($F_1 > 0.90$), outperforming Newspaper, Goose, and Readability while operating purely on CPU with minimal RAM overhead.
 - **`huggingface/datatrove`**: Hugging Face's pipeline for FineWeb, setting the gold standard for pipeline stages: Extraction $\to$ Heuristic Filtering $\to$ Line Dedup $\to$ MinHash LSH $\to$ Tokenization.
 - **`duckduckgo_search`**: Free, unauthenticated, rate-limited search querying enabling dynamic domain discovery without proprietary search engine API billing.
 
-### 6.3 Mathematical Proofs & Algorithmic Formulations
+### 7.3 Mathematical Proofs & Algorithmic Formulations
 
 #### 1. Recursive Training on Generated Data (Shumailov et al., 2024)
 Shumailov et al. analyze model collapse under explicit assumptions about recursive generation, finite sampling, and model approximation. Their results show that errors can accumulate across generations and that rare modes may disappear; the paper does not establish the generic recurrence below or a universal monotonic variance-decay law. In one Gaussian estimation setup, the paper instead derives variance growth of approximately $\sigma^2(1+n/M)$ for fixed sample size $M$ while analyzing distributional estimation risk. Therefore this project treats synthetic-data detection and collapse thresholds as engineering heuristics, not as consequences of a universal variance theorem.
@@ -486,7 +486,7 @@ $$
 \text{Contaminated}(d) = \mathbb{I}\left( \exists g \in \text{13-grams}(\mathcal{Q}_{\text{test}}) : g \in d \right)
 $$
 
-### 7.4 Section 7.1: Multi-Source Web & Geospatial Ingestion Architecture
+### 7.4 Multi-Source Web & Geospatial Ingestion Architecture
 
 #### 1. Inherent Limitations of DuckDuckGo-Only Scraping
 Relying solely on DuckDuckGo scraping for LLM post-training introduces critical architectural vulnerabilities:
@@ -585,7 +585,7 @@ $$
 \text{Manifest Entry} = \langle \text{Source Type}, \, \text{URL/URI}, \, \text{Timestamp}, \, \text{HTTP Status}, \, \text{Content Length}, \, \text{SHA256}, \, \text{Metadata} \rangle
 $$
 
-### 6.5 Modern AI Platform Architectures for Web Search & Ingestion
+### 7.5 Modern AI Platform Architectures for Web Search & Ingestion
 
 How frontier AI platforms handle web search limitations in production:
 
@@ -621,7 +621,7 @@ Introduced self-reflective retrieval tokens where the model learns when to retri
 
 ---
 
-### 6.6 Search-Augmented Reinforcement Learning (Search-RL & GRPO)
+### 7.6 Search-Augmented Reinforcement Learning (Search-RL & GRPO)
 
 Frontier post-training (DeepSeek Search-R1 / AlphaZero-style Search Agents, 2024–2025) connects web retrieval directly to **Reinforcement Learning with Verifiable Rewards**.
 
@@ -706,7 +706,7 @@ $$
 - **Policy Update**: Trajectories that retrieved the right information with fewer searches and accurate citations receive positive advantage $A_i > 0$. Trajectories that failed, hallucinated citations, or spammed redundant queries receive negative advantage $A_i < 0$.
 - **Outcome**: The LLM autonomously discovers optimal query formulations, verifies external evidence, and produces grounded responses without requiring human annotators!
 
-### 7.7 Section 7.2: Industrial Data Cleaning, MinHash LSH Deduplication, & Contamination Pipeline
+### 7.7 Industrial Data Cleaning, MinHash LSH Deduplication, & Contamination Pipeline
 
 #### 1. Synthesis of Modern Frontier Data Curation Systems
 Modern LLM post-training collapses when trained on uncurated, repetitive, or contaminated web corpora (Shumailov et al., Nature 2024). Frontier AI labs have converged on standardized, multi-stage curation pipelines:
@@ -823,7 +823,7 @@ $$
 
 Any contaminated document is immediately rejected to prevent false benchmark memorization during SFT and RL post-training.
 
-### 7.8 Section 7.3: Graph-Based Connected Components Cluster Deduplication & Canonical Election
+### 7.8 Graph-Based Connected Components Cluster Deduplication & Canonical Election
 
 #### 1. The Transitive Redundancy Problem in Streaming Deduplication
 When documents stream into an LLM ingestion pipeline, evaluating near-duplicates on an arrival basis suffers from **order dependency**:
@@ -890,7 +890,7 @@ flowchart TD
 
 ---
 
-### 7.9 Section 7.4: Experience Replay Buffer & Zero-RAM Binary Serialization Pipeline
+### 7.9 Experience Replay Buffer & Zero-RAM Binary Serialization Pipeline
 
 #### 1. The Convex Combination Experience Replay Mixture
 To protect the LLM against catastrophic forgetting and model collapse (Shumailov et al., Nature 2024), newly ingested web data is never trained in isolation. Training mini-batches are drawn from a convex combination distribution:
@@ -935,7 +935,7 @@ flowchart TD
 
 # Chapter 8: Supervised Fine-Tuning (SFT) & Low-Rank Adaptation (LoRA)
 
-### 7.1 Comprehensive Academic Literature & Landmark Post-Training Paradigms
+### 8.1 Comprehensive Academic Literature & Landmark Post-Training Paradigms
 
 Post-training adaptation bridges the gap between raw causal next-token predictors and aligned, instruction-following assistants. In an autonomous, continual learning environment, post-training must solve two fundamental problems simultaneously:
 1. **Instruction Following & Style Assimilation**: Adapting the model to parse multi-turn user intent and generate structured, helpful, factual completions.
@@ -1016,7 +1016,7 @@ $$
 
 ---
 
-### 7.2 Top Industry Open-Source Repositories & Implementation Anatomy
+### 8.2 Top Industry Open-Source Repositories & Implementation Anatomy
 
 A survey of top production repositories reveals essential architectural patterns that define a "10/10" implementation:
 
@@ -1030,7 +1030,7 @@ A survey of top production repositories reveals essential architectural patterns
 
 ---
 
-### 7.3 Mathematical Formulations & Theoretical Proofs
+### 8.3 Mathematical Formulations & Theoretical Proofs
 
 #### 1. LoRA Forward Pass, Scaling, and Initialization Invariance
 
@@ -1242,7 +1242,7 @@ If $H(\mathcal{P}_{\text{anchor}}) \ge H_0$ and entropy is measured over a share
 
 ---
 
-### 7.4 Mermaid Architectural & Flow Visualizations
+### 8.4 Mermaid Architectural & Flow Visualizations
 
 #### Diagram 1: LoRA Forward Pass, Scaled Addition, and Zero-Overhead Weight Merging
 
@@ -1448,7 +1448,7 @@ A dedicated master test file `tests/test_m3_sft.py` will be registered with `tes
 
 ---
 
-### 8.6 Section 8.1: Instruction Data Harmonization, ChatML Templating & Completion Masking Engine
+### 8.6 Instruction Data Harmonization, ChatML Templating & Completion Masking Engine
 
 #### 1. Academic & Engineering Foundations for Instruction Curation
 
@@ -1643,7 +1643,7 @@ class HarmonizedSFTDataset(torch.utils.data.Dataset):
 
 ---
 
-### 8.7 Section 8.2: Native PyTorch LoRA Adapter Architecture & Model Injection Engine
+### 8.7 Native PyTorch LoRA Adapter Architecture & Model Injection Engine
 
 #### 1. Academic & Industry Foundations for Parameter-Efficient Adaptation
 
@@ -1905,7 +1905,7 @@ def load_adapter_weights(model: nn.Module, adapter_path: str | Path) -> None:
 
 ---
 
-### 8.8 Section 8.3: Supervised Fine-Tuning (SFT) Training Loop & Optimizer Engine
+### 8.8 Supervised Fine-Tuning (SFT) Training Loop & Optimizer Engine
 
 #### 1. Academic & Industry Literature on Instruction Training Dynamics
 
@@ -2104,7 +2104,7 @@ class SFTTrainer:
 
 ---
 
-### 8.9 Section 8.4: Anti-Catastrophic Forgetting Evaluator, Regression Gate & Turnkey Continual SFT Orchestrator
+### 8.9 Anti-Catastrophic Forgetting Evaluator, Regression Gate & Turnkey Continual SFT Orchestrator
 
 #### 1. Academic & Industry Literature on Continual Post-Training Evaluation
 
@@ -2347,7 +2347,7 @@ The continual learning architecture establishes zero-glue bidirectional intercon
 
 ---
 
-### 8.1 Landmark Academic Papers Behind Autonomous LLM Evaluation & Release Gating
+### 9.1 Landmark Academic Papers Behind Autonomous LLM Evaluation & Release Gating
 
 1. **Gao, T., Yen, H., Yu, J., & Chen, D. (2023)**: *Enabling Large Language Models to Generate Text with Citations*. Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing (EMNLP), 6465–6488.
    - **Key Finding**: LLMs frequently output fluent hallucinations with fictitious citations. The authors formalized the **ALCE (Automatic LLM Citation Evaluation)** benchmark, establishing two fundamental citation metrics:
@@ -2377,7 +2377,7 @@ The continual learning architecture establishes zero-glue bidirectional intercon
 
 ---
 
-### 8.2 Top Open-Source Repository Implementations Studied
+### 9.2 Top Open-Source Repository Implementations Studied
 
 1. **`princeton-nlp/ALCE`** (`https://github.com/princeton-nlp/ALCE`):
    - Regex-based citation extraction capturing numeric citations (`[1]`, `[2]`), bracketed ranges (`[1-3]`), and author-year markers.
@@ -2403,7 +2403,7 @@ The continual learning architecture establishes zero-glue bidirectional intercon
 
 ---
 
-### 8.3 Mathematical Formulations & Derivations
+### 9.3 Mathematical Formulations & Derivations
 
 #### 8.3.1 Gao et al. (ALCE) Citation Metrics
 Let generated text $Y$ consist of sentences $S = \{s_1, s_2, \dots, s_N\}$.
@@ -2579,7 +2579,7 @@ Milestone 4 is decomposed into four sequential, interconnected engineering phase
 
 ---
 
-### 8.5 Mermaid Architectural Visualizations
+### 9.5 Mermaid Architectural Visualizations
 
 #### Diagram 1: Automated Release Gate & Benchmark Evaluation Topology
 ```mermaid
@@ -2618,7 +2618,7 @@ flowchart TD
 
 ---
 
-### 8.6 Component Interfaces & Data Contracts
+### 9.6 Component Interfaces & Data Contracts
 
 #### Module 1: `evaluation/benchmark_suite.py` (Phase 4.1)
 ```python
@@ -2738,7 +2738,7 @@ class AutonomousReleaseGate:
 
 ---
 
-### 8.7 Algorithmic Edge Cases & Failure Modes
+### 9.7 Algorithmic Edge Cases & Failure Modes
 
 1. **Spurious Citation Hallucination**:
    - *Problem*: Models output dummy references like `[1]` or `(Smith, 2020)` that have no corresponding entry in the context.
@@ -2765,7 +2765,7 @@ $$
 
 ---
 
-### 9.8 Section 9.1 Specification: Golden Domain Benchmark Suite & Schema Contracts
+### 9.8 Golden Domain Benchmark Suite & Schema Contracts
 
 #### 1. Theoretical Rationale & The Four-Bucket Stratification
 To evaluate candidate checkpoints with statistical integrity and prevent deceptive overconfidence from generic benchmarks (MMLU, GSM8k), Phase 4.1 establishes a curated, versioned **Golden Domain Benchmark Suite** ($N = 30$ cases) grounded in the technical curriculum of the model (ML Theory, Transformers, PEFT, Continual Systems).
@@ -2915,7 +2915,7 @@ class GoldenBenchmarkSuite:
 
 ---
 
-### 9.9 Section 9.2 Specification: Citation Extraction, Token Faithfulness, & RAG Triad Verifier
+### 9.9 Citation Extraction, Token Faithfulness, & RAG Triad Verifier
 
 #### 1. Theoretical Rationale & The Attribution Verification Problem
 In production generative systems with retrieval-augmented generation (RAG) and continual learning, language models often generate syntactically convincing, fluent answers decorated with fictitious citations or superficial attribution tags (e.g., placing `[1]` next to a fact that appears nowhere in document 1).
@@ -3118,7 +3118,7 @@ class CitationVerifier:
 
 ---
 
-### 9.10 Section 9.3: LLM-as-a-Judge Engine, Rubric Calibration, & Systematic Bias Mitigation
+### 9.10 LLM-as-a-Judge Engine, Rubric Calibration, & Systematic Bias Mitigation
 
 #### 1. Theoretical Motivation & Foundations
 In automated LLM alignment and continual post-training workflows, standard n-gram overlap metrics (BLEU, ROUGE) are well-known to correlate poorly with human judgments of reasoning depth, conceptual correctness, and stylistic coherence. Zheng et al. (NeurIPS 2023, *"Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena"*) demonstrated that strong LLMs acting as automated judges achieve > 80% agreement with human domain experts.
@@ -3400,7 +3400,7 @@ class LLMJudge:
 
 ---
 
-### 9.11 Section 9.4: Statistical Release Gating, Bootstrap Resampling, Hypothesis Testing, & Autonomous Rollback Orchestration
+### 9.11 Statistical Release Gating, Bootstrap Resampling, Hypothesis Testing, & Autonomous Rollback Orchestration
 
 #### 1. Theoretical Motivation & Foundations
 In Continual Learning and autonomous post-training systems, evaluating whether a new checkpoint $M_{\text{cand}}$ should be promoted to production over a verified baseline $M_{\text{base}}$ cannot rely on naive scalar point estimates (e.g. "mean score rose from 4.12 to 4.15"). Such point estimates suffer from severe statistical vulnerability:
@@ -3704,7 +3704,7 @@ class RollbackOrchestrator:
 
 ---
 
-### 9.1 Landmark Academic Papers Behind Preference Learning & Verifiable RL
+### 10.1 Landmark Academic Papers Behind Preference Learning & Verifiable RL
 
 1. **Bradley, R. A., & Terry, M. E. (1952)**: *Rank analysis of incomplete block designs: I. The method of paired comparisons*. Biometrika, 39(3/4), 324–345.
    - **Foundational Premise**: Models the probability that an individual prefers option $y_w$ over $y_l$ given prompt $x$ as a logistic sigmoid over latent scalar rewards:
@@ -3768,7 +3768,7 @@ $$
 
 ---
 
-### 9.2 Mathematical Derivations & Algorithmic Foundations
+### 10.2 Mathematical Derivations & Algorithmic Foundations
 
 #### (A) Bradley-Terry Pairwise Reward Modeling
 For a prompt $x$ and pair of responses $(y_w, y_l)$ where $y_w$ is preferred over $y_l$, a parameterized scalar reward model $r_\phi(x, y)$ is trained by minimizing the negative log-likelihood:
@@ -3954,7 +3954,7 @@ $$
 
 ---
 
-### 9.3 System Architecture & Mermaid Pipeline Topology
+### 10.3 System Architecture & Mermaid Pipeline Topology
 
 ```mermaid
 flowchart TD
@@ -4055,7 +4055,7 @@ To improve implementation quality, mathematical verification, memory-mapped toke
 
 ---
 
-### 10.5 Section 10.1: Preference Data Contracts, Pairwise Bradley-Terry Reward Modeling, & Dataset Pipeline
+### 10.5 Preference Data Contracts, Pairwise Bradley-Terry Reward Modeling, & Dataset Pipeline
 
 #### 1. Theoretical Motivation & Foundations
 In supervised fine-tuning (Milestone 3), the model learns an unconditional distribution over demonstrations:
@@ -4279,7 +4279,7 @@ class RewardTrainer:
 
 ---
 
-### 10.6 Section 10.2: Direct Preference Optimization (DPO) Engine & Loss Formulation
+### 10.6 Direct Preference Optimization (DPO) Engine & Loss Formulation
 
 #### 1. Theoretical Foundation & Literature Survey
 Direct Preference Optimization (Rafailov et al., NeurIPS 2023) eliminates the need for fitting an explicit intermediate reward model $r_\psi(x, y)$ and performing complex reinforcement learning loops (e.g. PPO, policy gradients) by proving an analytical equivalence between the Bradley-Terry preference model and the closed-form solution to the KL-constrained RL objective.
@@ -4499,7 +4499,7 @@ tests/
 
 ---
 
-### 10.7 Section 10.3: Proximal Policy Optimization (PPO) Actor-Critic RL Engine & Generalized Advantage Estimation (GAE)
+### 10.7 Proximal Policy Optimization (PPO) Actor-Critic RL Engine & Generalized Advantage Estimation (GAE)
 
 #### 1. Theoretical Foundation & Literature Survey
 While Direct Preference Optimization (DPO) optimizes offline preference datasets in closed form, online Reinforcement Learning from Human/AI Feedback via **Proximal Policy Optimization (PPO)** remains the foundational engine for exploratory policy improvement (Ouyang et al., 2022; Schulman et al., 2017). PPO enables the language model to explore completions beyond the fixed training corpus, receive step-level credit assignment, and continually optimize against dynamic reward models or verifiable execution verifiers.
@@ -4693,7 +4693,7 @@ tests/
 
 ---
 
-### 10.8 Section 10.4: Group Relative Policy Optimization (GRPO - DeepSeek-R1 Style) Engine & Verifiable Rewards
+### 10.8 Group Relative Policy Optimization (GRPO - DeepSeek-R1 Style) Engine & Verifiable Rewards
 
 #### 1. Theoretical Foundation & Literature Survey
 Group Relative Policy Optimization (GRPO), introduced in **DeepSeekMath** (Shao et al., 2024) and foundational to **DeepSeek-R1** (Guo et al., 2025), fundamentally reimagines Reinforcement Learning for Large Language Models by eliminating the separate Critic value network $V_\phi$ used in traditional PPO.
@@ -4865,7 +4865,7 @@ tests/
 
 ---
 
-### 10.9 Section 10.5: Unified Alignment Benchmark Suite, Dynamic Engine Selection, & Full System Integration
+### 10.9 Unified Alignment Benchmark Suite, Dynamic Engine Selection, & Full System Integration
 
 #### 1. Theoretical Foundation & Comparative Analysis of Alignment Paradigms
 Modern post-training alignment encompasses multiple distinct methodologies with contrasting trade-offs across sample efficiency, VRAM requirements, and robustness against reward hacking:
@@ -5072,7 +5072,7 @@ To deploy new candidate weights $\theta_{\text{cand}}$ without dropping in-fligh
 
 ---
 
-### 11.1 Section 11.1: Hybrid Retrieval Engine (BM25 + Dense Semantic Fusion & Reciprocal Rank Fusion)
+### 11.1 Hybrid Retrieval Engine (BM25 + Dense Semantic Fusion & Reciprocal Rank Fusion)
 
 #### 1. Theoretical Foundation & Literature Survey
 Retrieval-Augmented Generation (RAG) grounds language model responses on authoritative external evidence, mitigating hallucinations and ensuring factual veracity (Lewis et al., NeurIPS 2020; Guu et al., ICML 2020).
@@ -5171,7 +5171,7 @@ tests/
 
 ---
 
-### 11.2 Section 11.2: Experience Replay Buffer Manager (70% Golden Anchor / 30% Streaming Web + Model Collapse Guards)
+### 11.2 Experience Replay Buffer Manager (70% Golden Anchor / 30% Streaming Web + Model Collapse Guards)
 
 #### 1. Theoretical Foundation & Literature Survey
 In an autonomous continual learning lifecycle, training an autoregressive model sequentially on newly ingested web data poses two existential threats:
@@ -5301,7 +5301,7 @@ tests/
 
 ---
 
-### 10.3 Concurrent Serving & Ingestion Architecture (design target; throughput not benchmarked)
+### 11.3 Concurrent Serving & Ingestion Architecture (design target; throughput not benchmarked)
 
 #### 1. Theoretical Formulation & Literature Survey
 When a production AI system faces high concurrency (e.g., $100\text{ queries/second}$), naive continual learning loops fail catastrophically:
@@ -5455,7 +5455,7 @@ apps/
 
 ---
 
-### 11.4 Section 11.4: High-Throughput FastAPI Serving Gateway & Zero-Downtime Atomic Hot-Swap
+### 11.4 High-Throughput FastAPI Serving Gateway & Zero-Downtime Atomic Hot-Swap
 
 #### 1. Theoretical Foundation & Literature Survey
 The intended serving design separates network concurrency from model execution. No claim of 100+ requests/second or a specific latency is made without a reproducible load test.

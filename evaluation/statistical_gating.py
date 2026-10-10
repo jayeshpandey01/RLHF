@@ -18,6 +18,7 @@ import math
 import random
 from typing import Any, Optional
 
+from scipy.optimize import brentq
 from loguru import logger
 from scipy import stats
 
@@ -117,56 +118,125 @@ class GateReport:
 
 
 def compute_statistical_power(
-    cand_scores: list[float],
-    base_scores: list[float],
-    target_delta: float = 0.05,
+    sample_size: int,
+    paired_delta_std: Optional[float],
+    target_delta: Optional[float] = None,
     alpha: float = 0.05,
 ) -> dict[str, Any]:
-    """Compute sensitivity and statistical power for paired continuous rubric distributions.
+    """Estimate paired-mean power using a noncentral-t planning model.
 
-    Calculates post-hoc power and minimum detectable effect (MDE) at 80% power (beta=0.20)
-    for sample size n, verifying whether benchmark size is adequate to resolve target_delta.
+    This a priori estimate assumes normally distributed paired deltas. Release
+    decisions are still made separately using the configured bootstrap and
+    Wilcoxon analyses.
     """
-    n = len(cand_scores)
-    if n < 2:
+    if isinstance(sample_size, bool) or not isinstance(sample_size, int) or sample_size < 0:
+        raise ValueError("sample_size must be a non-negative integer.")
+    if not 0.0 < alpha < 1.0:
+        raise ValueError("alpha must be strictly between 0 and 1.")
+    if target_delta is not None and (
+        not math.isfinite(target_delta) or target_delta <= 0.0
+    ):
+        raise ValueError("target_delta must be a finite positive value.")
+    if paired_delta_std is not None and (
+        not math.isfinite(paired_delta_std) or paired_delta_std < 0.0
+    ):
+        raise ValueError("paired_delta_std must be finite and non-negative.")
+
+    if paired_delta_std is None or target_delta is None:
+        missing_parameters = []
+        if paired_delta_std is None:
+            missing_parameters.append("paired-delta standard deviation")
+        if target_delta is None:
+            missing_parameters.append("minimum meaningful improvement")
         return {
-            "power": 0.0,
-            "mde": float("inf"),
-            "sample_size": n,
+            "power": None,
+            "mde": None,
+            "sample_size": sample_size,
             "adequate_power": False,
             "target_delta": target_delta,
-            "warning": "Sample size too small (<2) for power estimation.",
+            "paired_delta_std": paired_delta_std,
+            "warning": (
+                f"Configure {' and '.join(missing_parameters)} from an independent pilot "
+                "before a priori power analysis."
+            ),
+            "interpretation": (
+                "Power was not estimated; promotion is blocked until pilot variance and "
+                "a minimum meaningful improvement are configured."
+            ),
         }
 
-    deltas = [c - b for c, b in zip(cand_scores, base_scores)]
-    mean_delta = sum(deltas) / n
-    var = sum((d - mean_delta) ** 2 for d in deltas) / (n - 1)
-    std_delta = math.sqrt(var)
-    se = std_delta / math.sqrt(n)
+    if sample_size < 2:
+        return {
+            "power": None,
+            "mde": None,
+            "sample_size": sample_size,
+            "adequate_power": False,
+            "target_delta": target_delta,
+            "paired_delta_std": paired_delta_std,
+            "warning": "Sample size too small (<2) for power estimation.",
+            "power_model": "paired_noncentral_t",
+            "interpretation": "Power is not estimable with fewer than two paired cases.",
+        }
 
-    z_alpha = float(stats.norm.ppf(1.0 - alpha / 2.0))
-    if se > 1e-9:
-        z_beta = (abs(target_delta) / se) - z_alpha
-        power = float(stats.norm.cdf(z_beta))
-        mde = float((z_alpha + 0.8416) * se)
+    se = paired_delta_std / math.sqrt(sample_size)
+    if se > 0.0:
+        degrees_of_freedom = sample_size - 1
+        critical_value = float(stats.t.ppf(1.0 - alpha / 2.0, degrees_of_freedom))
+
+        def two_sided_power(noncentrality: float) -> float:
+            return float(
+                stats.nct.cdf(-critical_value, degrees_of_freedom, noncentrality)
+                + stats.nct.sf(critical_value, degrees_of_freedom, noncentrality)
+            )
+
+        power = two_sided_power(target_delta / se)
+        upper_effect = 1.0
+        while upper_effect < 1024.0 and (
+            not math.isfinite(two_sided_power(upper_effect))
+            or two_sided_power(upper_effect) < 0.80
+        ):
+            upper_effect *= 2.0
+        upper_power = two_sided_power(upper_effect)
+        if not math.isfinite(upper_power) or upper_power < 0.80:
+            raise ArithmeticError(
+                "Could not estimate the minimum detectable effect for the configured "
+                f"sample size ({sample_size}) and significance level ({alpha})."
+            )
+        mde = brentq(
+            lambda effect: two_sided_power(effect) - 0.80,
+            0.0,
+            upper_effect,
+        ) * se
     else:
         power = 1.0
         mde = 0.0
 
-    adequate = power >= 0.80 and n >= 30
+    adequate = power >= 0.80 and sample_size >= 30
     warning = ""
-    if n < 30:
-        warning = f"Benchmark sample size ({n} cases) has limited statistical power. Recommendations require caution."
+    if sample_size < 30:
+        warning = (
+            f"Benchmark sample size ({sample_size} cases) is below the minimum of 30 "
+            "paired cases required for release."
+        )
     elif not adequate:
-        warning = f"Estimated statistical power ({power:.2%}) is below 80% threshold for detecting delta={target_delta}."
+        warning = (
+            f"Estimated a priori power ({power:.2%}) is below 80% for "
+            f"detecting delta={target_delta}."
+        )
 
     return {
         "power": round(power, 4),
         "mde": round(mde, 4),
-        "sample_size": n,
+        "sample_size": sample_size,
         "adequate_power": adequate,
         "target_delta": target_delta,
+        "paired_delta_std": paired_delta_std,
         "warning": warning,
+        "power_model": "paired_noncentral_t",
+        "interpretation": (
+            "A priori paired-mean estimate using the configured independent-pilot variance "
+            "and a normal paired-delta assumption; release tests are evaluated separately."
+        ),
     }
 
 
@@ -310,7 +380,8 @@ class StatisticalReleaseGate:
         pass_threshold: float = 3.5,
         random_seed: int = 42,
         edge_case_delta_threshold: float = -0.15,
-        min_improvement_delta: float = 0.02,
+        min_improvement_delta: Optional[float] = None,
+        paired_delta_std: Optional[float] = None,
     ):
         """Initialize the Statistical Release Gate.
 
@@ -322,7 +393,10 @@ class StatisticalReleaseGate:
             pass_threshold: Minimum rubric score considered a successful pass (default 3.5).
             random_seed: Deterministic seed for bootstrap resampling.
             edge_case_delta_threshold: Minimum allowed mean delta for edge cases (default -0.15).
-            min_improvement_delta: Calibrated minimum positive mean delta required for parity promotion (default 0.02).
+            min_improvement_delta: Minimum meaningful positive mean delta set before evaluation.
+            paired_delta_std: Paired-score standard deviation estimated from an independent pilot.
+                Promotion is blocked unless both the pilot variance and a meaningful margin
+                are configured.
         """
         self.bootstrap_samples = int(bootstrap_samples)
         self.ci_level = float(ci_level)
@@ -331,7 +405,16 @@ class StatisticalReleaseGate:
         self.pass_threshold = float(pass_threshold)
         self.random_seed = int(random_seed)
         self.edge_case_delta_threshold = float(edge_case_delta_threshold)
-        self.min_improvement_delta = float(min_improvement_delta)
+        if min_improvement_delta is not None and (
+            not math.isfinite(min_improvement_delta) or min_improvement_delta <= 0.0
+        ):
+            raise ValueError("min_improvement_delta must be finite and positive.")
+        self.min_improvement_delta = min_improvement_delta
+        if paired_delta_std is not None and (
+            not math.isfinite(paired_delta_std) or paired_delta_std < 0.0
+        ):
+            raise ValueError("paired_delta_std must be finite and non-negative.")
+        self.paired_delta_std = paired_delta_std
 
     def evaluate_gate(
         self,
@@ -376,18 +459,18 @@ class StatisticalReleaseGate:
 
         # 1. Strict score validation: fail-closed on missing, malformed, or out-of-range scores
         suite_case_ids = {c.case_id for c in all_cases}
-        missing_cand = [cid for cid in suite_case_ids if cid not in candidate_scores]
-        missing_base = [cid for cid in suite_case_ids if cid not in baseline_scores]
-        extra_cand = [cid for cid in candidate_scores if cid not in suite_case_ids]
-        extra_base = [cid for cid in baseline_scores if cid not in suite_case_ids]
+        missing_cand = sorted(cid for cid in suite_case_ids if cid not in candidate_scores)
+        missing_base = sorted(cid for cid in suite_case_ids if cid not in baseline_scores)
+        extra_cand = sorted(cid for cid in candidate_scores if cid not in suite_case_ids)
+        extra_base = sorted(cid for cid in baseline_scores if cid not in suite_case_ids)
 
         invalid_cand = [
             cid for cid, s in candidate_scores.items()
-            if not isinstance(s, (int, float)) or not math.isfinite(s) or s < 0.0 or s > 5.0
+            if isinstance(s, bool) or not isinstance(s, (int, float)) or not math.isfinite(s) or s < 0.0 or s > 5.0
         ]
         invalid_base = [
             cid for cid, s in baseline_scores.items()
-            if not isinstance(s, (int, float)) or not math.isfinite(s) or s < 0.0 or s > 5.0
+            if isinstance(s, bool) or not isinstance(s, (int, float)) or not math.isfinite(s) or s < 0.0 or s > 5.0
         ]
 
         if missing_cand or missing_base or extra_cand or extra_base or invalid_cand or invalid_base:
@@ -463,16 +546,17 @@ class StatisticalReleaseGate:
         )
 
         power_metrics = compute_statistical_power(
-            cand_list,
-            base_list,
+            sample_size=len(cand_list),
+            paired_delta_std=self.paired_delta_std,
             target_delta=self.min_improvement_delta,
             alpha=self.alpha,
         )
-        if power_metrics.get("warning"):
+        if not power_metrics["adequate_power"]:
             violated_checks.append(f"Statistical Sensitivity Warning: {power_metrics['warning']}")
         else:
             passed_checks.append(
-                f"Statistical Sensitivity: Adequate power ({power_metrics['power']:.1%}) for delta={self.min_improvement_delta}."
+                f"Statistical Sensitivity: Adequate a priori power "
+                f"({power_metrics['power']:.1%}) for delta={self.min_improvement_delta}."
             )
 
         # 4. Stratified Bucket Breakdown & Validation
@@ -617,6 +701,7 @@ class StatisticalReleaseGate:
             and regr_reg == 0
             and adv_mean >= self.pass_threshold
             and edge_delta >= self.edge_case_delta_threshold
+            and power_metrics["adequate_power"]
             and (
                 overall_boot.ci_lower > 0.0  # Statistically superior
                 or (
@@ -633,10 +718,23 @@ class StatisticalReleaseGate:
             )
         else:
             decision = GateDecision.BLOCK_RELEASE
-            summary = (
-                f"Release HELD with BLOCK_RELEASE. Candidate delta is indeterminate or below required "
-                f"improvement margin (Mean Delta: {overall_boot.mean_delta:+.3f}, required: +{self.min_improvement_delta:.3f})."
-            )
+            if not power_metrics["adequate_power"]:
+                power_display = (
+                    "not estimated"
+                    if power_metrics["power"] is None
+                    else f"{power_metrics['power']:.1%}"
+                )
+                summary = (
+                    f"Release HELD with BLOCK_RELEASE. Estimated a priori power "
+                    f"({power_display}) is inadequate for promotion; "
+                    f"minimum required is 80% with at least 30 paired cases. "
+                    f"{power_metrics['interpretation']}"
+                )
+            else:
+                summary = (
+                    f"Release HELD with BLOCK_RELEASE. Candidate delta is indeterminate or below required "
+                    f"improvement margin (Mean Delta: {overall_boot.mean_delta:+.3f}, required: +{self.min_improvement_delta:.3f})."
+                )
 
         return GateReport(
             decision=decision,
@@ -648,4 +746,3 @@ class StatisticalReleaseGate:
             violated_checks=violated_checks,
             recommendation_summary=summary,
         )
-

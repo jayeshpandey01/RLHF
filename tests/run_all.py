@@ -29,6 +29,7 @@ from tests.test_m6_hybrid_retrieval import TestM6HybridRetrieval
 from tests.test_m6_replay_buffer import TestM6ReplayBuffer
 from tests.test_m6_orchestrator import TestM6Orchestrator
 from tests.test_m6_serving_gateway import TestM6ServingGateway
+from tests.test_learning_jobs import TestLearningJobs
 from tests.test_e2e_pipeline import TestE2EPipeline
 
 if __name__ == "__main__":
@@ -60,6 +61,7 @@ if __name__ == "__main__":
     suite.addTests(loader.loadTestsFromTestCase(TestM6ReplayBuffer))
     suite.addTests(loader.loadTestsFromTestCase(TestM6Orchestrator))
     suite.addTests(loader.loadTestsFromTestCase(TestM6ServingGateway))
+    suite.addTests(loader.loadTestsFromTestCase(TestLearningJobs))
     suite.addTests(loader.loadTestsFromTestCase(TestE2EPipeline))
 
 

@@ -4,9 +4,8 @@
 See full detailed analysis in `docs/research.md` and the master verification suite in `tests/run_all.py` and `experiments/test_e2e_pipeline.py`.
 
 ### 1. Verification Summary
-- **185 / 185 unit & integration tests passing (100% green)** in `pytest`.
-- **179 / 179 master verification tests passing** in `tests/run_all.py`.
-- **E2E verification script** `experiments/test_e2e_pipeline.py` passes all 9 post-training lifecycle steps.
+- **220 / 220 master verification tests passing (100% green)** in `tests/run_all.py`.
+- The master run includes `TestE2EPipeline`; all included end-to-end tests passed.
 
 ### 2. Literature Mapping Highlights
 - **Autograd**: Linnainmaa (1970), Baur-Strassen Theorem (1983, $\text{Cost}(\nabla f) \le 5 \times \text{Cost}(f)$).
@@ -17,4 +16,3 @@ See full detailed analysis in `docs/research.md` and the master verification sui
 - **RL with Verifiable Rewards**: PPO & GAE (Schulman et al., 2015, 2017), GRPO & DeepSeek reverse KL (Shao et al., DeepSeekMath 2024; DeepSeek-R1 2025).
 - **Evaluation & Gating**: MT-Bench LLM Judge debiasing (Zheng et al., 2023), ALCE citation precision/recall (Gao et al., 2023), Paired Bootstrap (B=1000, 95% CI), Wilcoxon & McNemar tests.
 - **Hybrid Serving**: BM25 (Robertson & Zaragoza, 2009), RRF (Cormack et al., 2009), Semantic Cache (Bang et al., 2023), Reader-Writer zero-downtime hot-swap (Courtois et al., 1971).
-

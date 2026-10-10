@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional, Sequence, Union
+from typing import Callable, Optional, Sequence, Union
 
 import torch
 import torch.nn as nn
@@ -142,6 +142,7 @@ class PPOTrainer:
         input_ids: torch.Tensor,
         attention_mask: torch.Tensor,
         prompt_lengths: torch.Tensor,
+        terminal_rewards: Optional[torch.Tensor] = None,
     ) -> PPORolloutBatch:
         """Construct a complete PPORolloutBatch with rewards and GAE advantages.
 
@@ -149,6 +150,8 @@ class PPOTrainer:
             input_ids: Full sequence token IDs (prompt ∘ completion), shape (B, T).
             attention_mask: Binary attention mask (1 for active, 0 for pad), shape (B, T).
             prompt_lengths: Number of prompt tokens for each sequence, shape (B,).
+            terminal_rewards: Optional external terminal rewards, shape (B,). If supplied,
+                these replace the reward model's terminal score while retaining KL shaping.
 
         Returns:
             Populated PPORolloutBatch ready for PPO optimization epochs.
@@ -189,9 +192,20 @@ class PPOTrainer:
         kl_penalty = -self.kl_coef * (old_log_probs - ref_log_probs)
         rewards = rewards + kl_penalty * action_mask
 
-        # Terminal reward score from RewardModel
-        if self.reward_model is not None:
+        # Terminal reward score from an external reward callback or the reward model.
+        if terminal_rewards is not None:
+            terminal_rewards = terminal_rewards.to(self.device, dtype=rewards.dtype)
+            if terminal_rewards.shape != (B,):
+                raise ValueError(f"terminal_rewards must have shape ({B},).")
+            if not torch.isfinite(terminal_rewards).all():
+                raise ValueError("terminal_rewards must contain only finite values.")
+            rm_scores = terminal_rewards
+        elif self.reward_model is not None:
             rm_scores = self.reward_model(input_ids, attention_mask)  # Shape: (B,)
+        else:
+            rm_scores = None
+
+        if rm_scores is not None:
             seq_lens = attention_mask.sum(dim=-1).clamp(min=1).long() - 1
             for i in range(B):
                 active_indices = torch.nonzero(action_mask[i] > 0.0, as_tuple=False)
@@ -374,6 +388,9 @@ class PPOTrainer:
         3. Computes GAE advantages and target returns.
         4. Updates Actor-Critic networks and returns step metrics.
         """
+        if reward_fn is None and self.reward_model is None:
+            raise ValueError("PPO step_on_prompts requires reward_fn or a configured reward_model.")
+
         input_ids, attention_mask, prompt_lengths, completions = self.sample_rollouts(
             prompts=prompts,
             tokenizer=tokenizer,
@@ -382,39 +399,22 @@ class PPOTrainer:
             eos_token_id=eos_token_id,
         )
 
+        terminal_rewards = None
+        if reward_fn is not None:
+            scores = torch.as_tensor(reward_fn(completions), dtype=torch.float32, device=self.device)
+            if scores.shape != (len(completions),):
+                raise ValueError(
+                    f"reward_fn must return exactly {len(completions)} scalar rewards."
+                )
+            if not torch.isfinite(scores).all():
+                raise ValueError("reward_fn must return only finite scores.")
+            terminal_rewards = scores
+
         rollout_batch = self.build_rollout_batch(
             input_ids=input_ids,
             attention_mask=attention_mask,
             prompt_lengths=prompt_lengths,
+            terminal_rewards=terminal_rewards,
         )
 
-        if reward_fn is not None:
-            scores = reward_fn(completions)
-            B, T = input_ids.shape
-            custom_rewards = torch.zeros((B, T), dtype=torch.float32, device=self.device)
-            for i in range(B):
-                active_indices = torch.nonzero(rollout_batch.action_mask[i] > 0.0, as_tuple=False)
-                last_idx = active_indices[-1].item() if len(active_indices) > 0 else (input_ids.shape[1] - 1)
-                custom_rewards[i, last_idx] = float(scores[i])
-
-            advantages, returns = compute_gae_advantages(
-                rewards=custom_rewards,
-                values=rollout_batch.old_values,
-                masks=rollout_batch.action_mask,
-                gamma=self.gamma,
-                lam=self.lam,
-                normalize=True,
-            )
-            rollout_batch = PPORolloutBatch(
-                input_ids=rollout_batch.input_ids,
-                attention_mask=rollout_batch.attention_mask,
-                action_mask=rollout_batch.action_mask,
-                old_log_probs=rollout_batch.old_log_probs,
-                old_values=rollout_batch.old_values,
-                advantages=advantages,
-                returns=returns,
-            )
-
         return self.train_step(rollout_batch)
-
-

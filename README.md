@@ -1,10 +1,6 @@
 # Autonomous Continual Learning LLM Prototype
 
 
-<p align="center">
-  <img src="assets/bunny.jpg" alt="Calm Koala Resting" width="48%" style="border-radius: 10px;" />
-</p>
-
 Research and prototype code for a continual-learning LLM pipeline: web ingestion, curation, retrieval, replay, MiniGPT/LoRA training, evaluation, and serving components.
 
 **Implementation status:** the default FastAPI app now performs live web collection, curation, persistent indexing, and Ollama-backed grounded answers. Curated documents feed a separate Hugging Face Qwen LoRA worker; candidates are promoted into Ollama only when the statistical benchmark gate approves them. This is a single-process prototype, not a durable or authenticated production service. See [the research document's implementation status](docs/research.md#pipeline-implementation-status).
@@ -91,10 +87,22 @@ curl -sS -X POST http://localhost:8000/trigger_learning \
 
 The response includes a `job_id`; poll `GET /learning/jobs/<job_id>` until the
 job is `PROMOTED`, `BLOCKED`, or `FAILED`. Training uses
-`Qwen/Qwen2.5-0.5B-Instruct`, 20 CPU steps by default, and a 70/30 anchor/web
-sample mix. Set `HF_BASE_MODEL` or `HF_SFT_MAX_STEPS` before starting the API to
-override those defaults. Model downloads, CPU training, full benchmark
+`Qwen/Qwen2.5-0.5B-Instruct` and 20 CPU steps by default. Web corpus records
+must include `instruction` and `answer` fields plus
+`"supervision_status": "reviewed"` before use as SFT targets; unlabelled
+crawled documents remain retrieval evidence, and the
+worker returns `BLOCKED` rather than manufacturing pseudo-labels when no such
+records exist. With valid records, training uses a 70/30 anchor/web sample mix.
+Set `HF_BASE_MODEL` or `HF_SFT_MAX_STEPS` before starting the API to override
+those defaults. Model downloads, CPU training, full benchmark
 inference, and Ollama packaging can take substantial time and disk space.
+Candidate promotion also requires `HF_GATE_PAIRED_DELTA_STD` (from an
+independent paired benchmark pilot) and `HF_GATE_MIN_IMPROVEMENT_DELTA` (a
+predefined minimum meaningful score gain). Without both, the gate reports
+power as unestimated and blocks promotion. Do not estimate the variance from
+the candidate run being evaluated. The power estimate uses a paired noncentral-t
+planning model that assumes normally distributed paired deltas; it is not a
+substitute for the release gate's bootstrap and Wilcoxon analyses.
 Candidates that fail the statistical gate are retained as adapters with a
 gate report but are not created or promoted in Ollama. `/status` reports
 replay counts and the active learning job. `/models/rollback` returns serving
@@ -133,4 +141,3 @@ autonomous-learning-llm/
 ├── scripts/                    # Bootstrap & tunnel scripts
 └── tests/                      # Pytest verification suites
 ```
-# RLHF

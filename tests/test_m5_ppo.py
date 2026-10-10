@@ -4,6 +4,7 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import torch
 import torch.nn.functional as F
@@ -254,7 +255,163 @@ class TestM5PPO(unittest.TestCase):
             v2 = fresh_critic(pref_batch.chosen_input_ids[:1], pref_batch.chosen_attention_mask[:1])
             self.assertTrue(torch.allclose(v1, v2, atol=1e-4))
 
+    def test_critic_temporal_alignment_shift_contract(self):
+        """Verify CriticModel right-shift contract: V(s_t) = V(x, y_{<t}).
+
+        Position 0 is identically 0.0 (unconditioned initial state).
+        Position t >= 1 strictly reflects raw projection from position t-1.
+        Padding tokens are zeroed out by attention mask.
+        """
+        input_ids = torch.randint(0, len(self.tokenizer), (2, 16))
+        attention_mask = torch.ones((2, 16), dtype=torch.long)
+        attention_mask[:, 12:] = 0  # 4 padding tokens
+
+        # Raw projection without right shift
+        hidden = self.critic.extract_hidden_states(input_ids)
+        raw_values = self.critic.value_head(hidden)
+
+        shifted_values = self.critic(input_ids, attention_mask)
+
+        # 1. Position 0 must be exactly 0.0
+        self.assertTrue((shifted_values[:, 0] == 0.0).all())
+
+        # 2. Position t in [1, 11] matches raw_values[:, t-1]
+        self.assertTrue(torch.allclose(shifted_values[:, 1:12], raw_values[:, :11], atol=1e-5))
+
+        # 3. Padding positions [12, 15] must be zero
+        self.assertTrue((shifted_values[:, 12:] == 0.0).all())
+
+    def test_ppo_mode_preservation_in_build_rollout_batch(self):
+        """Verify build_rollout_batch preserves caller's train/eval mode for actor and critic."""
+        trainer = PPOTrainer(actor=self.actor, critic=self.critic, device=torch.device("cpu"))
+        input_ids = torch.randint(0, len(self.tokenizer), (2, 16))
+        attention_mask = torch.ones((2, 16), dtype=torch.long)
+        prompt_lens = torch.tensor([8, 8], dtype=torch.long)
+
+        # Case 1: Start in eval mode
+        self.actor.eval()
+        self.critic.eval()
+        trainer.build_rollout_batch(input_ids, attention_mask, prompt_lens)
+        self.assertFalse(self.actor.training)
+        self.assertFalse(self.critic.training)
+
+        # Case 2: Start in train mode
+        self.actor.train()
+        self.critic.train()
+        trainer.build_rollout_batch(input_ids, attention_mask, prompt_lens)
+        self.assertTrue(self.actor.training)
+        self.assertTrue(self.critic.training)
+
+    def test_ppo_sample_rollouts_eos_stopping_and_empty_validation(self):
+        """Verify sample_rollouts validates empty prompts and terminates on EOS."""
+        trainer = PPOTrainer(actor=self.actor, critic=self.critic, device=torch.device("cpu"))
+
+        # Empty prompts validation
+        with self.assertRaises(ValueError):
+            trainer.sample_rollouts(prompts=[], tokenizer=self.tokenizer)
+
+        # Set an EOS token
+        eos_id = self.tokenizer.encode("!")[0]
+        self.tokenizer.eos_token_id = eos_id
+
+        # Generate rollout
+        padded_ids, attn_mask, prompt_lens, completions = trainer.sample_rollouts(
+            prompts=["Test prompt"],
+            tokenizer=self.tokenizer,
+            max_new_tokens=20,
+            eos_token_id=eos_id,
+        )
+
+        self.assertEqual(padded_ids.shape[0], 1)
+        self.assertEqual(attn_mask.shape[0], 1)
+        self.assertEqual(len(completions), 1)
+
+    def test_ppo_step_on_prompts_end_to_end(self):
+        """Verify step_on_prompts runs full online rollout-to-update cycle."""
+        trainer = PPOTrainer(
+            actor=self.actor,
+            critic=self.critic,
+            actor_optimizer=torch.optim.AdamW(self.actor.parameters(), lr=1e-3),
+            critic_optimizer=torch.optim.AdamW(self.critic.parameters(), lr=1e-3),
+            device=torch.device("cpu"),
+        )
+
+        metrics = trainer.step_on_prompts(
+            prompts=["Hello world", "What is RLHF?"],
+            tokenizer=self.tokenizer,
+            reward_fn=lambda completions: [1.0, -0.5],
+            max_new_tokens=16,
+        )
+
+        self.assertIn("loss", metrics)
+        self.assertIn("policy_loss", metrics)
+        self.assertIn("vf_loss", metrics)
+        self.assertTrue(torch.isfinite(torch.tensor(metrics["loss"])))
+
+    def test_ppo_external_reward_preserves_kl_shaping(self):
+        """Verify custom terminal rewards are added without discarding token-level KL rewards."""
+        ref_model = MiniGPT(self.config)
+        ref_model.load_state_dict(self.actor.state_dict())
+        with torch.no_grad():
+            for parameter in ref_model.parameters():
+                parameter.add_(0.01)
+
+        trainer = PPOTrainer(
+            actor=self.actor,
+            critic=self.critic,
+            ref_model=ref_model,
+            kl_coef=0.2,
+            device=torch.device("cpu"),
+        )
+        input_ids = torch.randint(0, len(self.tokenizer), (1, 5))
+        attention_mask = torch.ones((1, 5), dtype=torch.long)
+        prompt_lengths = torch.tensor([2], dtype=torch.long)
+        action_mask = torch.tensor([[0.0, 0.0, 1.0, 1.0, 1.0]])
+
+        self.actor.eval()
+        ref_model.eval()
+        old_log_probs, _ = compute_token_log_probs_and_entropy(self.actor, input_ids)
+        ref_log_probs, _ = compute_token_log_probs_and_entropy(ref_model, input_ids)
+        expected_rewards = -trainer.kl_coef * (old_log_probs - ref_log_probs) * action_mask
+        expected_rewards[0, 4] += 2.0
+        captured = {}
+
+        def capture_rewards(rewards, values, masks, gamma, lam, normalize):
+            captured["rewards"] = rewards.clone()
+            zeros = torch.zeros_like(rewards)
+            return zeros, zeros
+
+        with patch(
+            "training.m5_preference.ppo_trainer.compute_gae_advantages",
+            side_effect=capture_rewards,
+        ):
+            trainer.build_rollout_batch(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                prompt_lengths=prompt_lengths,
+                terminal_rewards=torch.tensor([2.0]),
+            )
+
+        self.assertTrue(torch.allclose(captured["rewards"], expected_rewards, atol=1e-5))
+
+    def test_ppo_step_rejects_reward_count_mismatch(self):
+        trainer = PPOTrainer(actor=self.actor, critic=self.critic, device=torch.device("cpu"))
+        sequences = torch.randint(0, len(self.tokenizer), (2, 8))
+        mask = torch.ones_like(sequences)
+        prompt_lengths = torch.tensor([4, 4])
+
+        with patch.object(
+            trainer,
+            "sample_rollouts",
+            return_value=(sequences, mask, prompt_lengths, ["first", "second"]),
+        ):
+            with self.assertRaisesRegex(ValueError, "exactly 2"):
+                trainer.step_on_prompts(
+                    prompts=["a", "b"],
+                    tokenizer=self.tokenizer,
+                    reward_fn=lambda completions: [1.0],
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
-

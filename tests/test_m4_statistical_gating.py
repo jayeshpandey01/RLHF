@@ -13,6 +13,7 @@ from evaluation.statistical_gating import (
     StatisticalReleaseGate,
     compute_mcnemar_discordance,
     compute_paired_bootstrap,
+    compute_statistical_power,
     compute_wilcoxon_signed_rank,
 )
 from evaluation.rollback_orchestrator import DeploymentState, RollbackOrchestrator
@@ -24,7 +25,12 @@ class TestM4StatisticalGating(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.mkdtemp()
         self.suite = GoldenBenchmarkSuite.load_default_suite()
-        self.gate = StatisticalReleaseGate(bootstrap_samples=500, random_seed=42)
+        self.gate = StatisticalReleaseGate(
+            bootstrap_samples=500,
+            random_seed=42,
+            paired_delta_std=0.02,
+            min_improvement_delta=0.02,
+        )
 
     def tearDown(self):
         shutil.rmtree(self.temp_dir, ignore_errors=True)
@@ -223,6 +229,93 @@ class TestM4StatisticalGating(unittest.TestCase):
         self.assertIn("power", report.power_analysis)
         self.assertIn("mde", report.power_analysis)
         self.assertEqual(report.power_analysis["sample_size"], len(self.suite.cases))
+        self.assertEqual(report.power_analysis["paired_delta_std"], 0.02)
+
+    def test_gate_blocks_promotion_when_estimated_power_is_inadequate(self):
+        """Do not promote a noisy candidate when observed sensitivity is below threshold."""
+        base_scores = {case.case_id: 4.0 for case in self.suite.cases}
+        cand_scores = {
+            case.case_id: 4.0 + (0.65 if index % 2 else -0.45)
+            for index, case in enumerate(self.suite.cases)
+        }
+
+        low_power_gate = StatisticalReleaseGate(
+            bootstrap_samples=500,
+            random_seed=42,
+            paired_delta_std=1.0,
+            min_improvement_delta=0.02,
+        )
+        report = low_power_gate.evaluate_gate(
+            suite=self.suite,
+            candidate_scores=cand_scores,
+            baseline_scores=base_scores,
+        )
+
+        self.assertFalse(report.power_analysis["adequate_power"])
+        self.assertEqual(report.decision, GateDecision.BLOCK_RELEASE)
+        self.assertIn("inadequate for promotion", report.recommendation_summary)
+
+    def test_gate_blocks_promotion_until_independent_pilot_variance_is_configured(self):
+        base_scores = {case.case_id: 3.8 for case in self.suite.cases}
+        cand_scores = {case.case_id: 4.6 for case in self.suite.cases}
+        uncalibrated_gate = StatisticalReleaseGate(
+            bootstrap_samples=500,
+            random_seed=42,
+        )
+
+        report = uncalibrated_gate.evaluate_gate(
+            suite=self.suite,
+            candidate_scores=cand_scores,
+            baseline_scores=base_scores,
+        )
+
+        self.assertEqual(report.decision, GateDecision.BLOCK_RELEASE)
+        self.assertIsNone(report.power_analysis["power"])
+        self.assertIn("minimum meaningful improvement", report.power_analysis["warning"])
+
+    def test_power_analysis_rejects_invalid_paired_inputs(self):
+        with self.assertRaisesRegex(ValueError, "sample_size"):
+            compute_statistical_power(sample_size=-1, paired_delta_std=0.1)
+
+        with self.assertRaisesRegex(ValueError, "alpha"):
+            compute_statistical_power(
+                sample_size=30,
+                paired_delta_std=0.1,
+                alpha=1.0,
+            )
+
+    def test_power_analysis_uses_noncentral_t_for_small_samples(self):
+        metrics = compute_statistical_power(
+            sample_size=30,
+            paired_delta_std=0.1,
+            target_delta=0.02,
+        )
+
+        self.assertEqual(metrics["power_model"], "paired_noncentral_t")
+        self.assertAlmostEqual(metrics["power"], 0.1852, places=4)
+        self.assertAlmostEqual(metrics["mde"], 0.0529, places=4)
+        self.assertIn("normal paired-delta assumption", metrics["interpretation"])
+
+    def test_power_analysis_does_not_treat_small_nonzero_variance_as_zero(self):
+        metrics = compute_statistical_power(
+            sample_size=30,
+            paired_delta_std=1e-10,
+            target_delta=1e-12,
+        )
+
+        self.assertAlmostEqual(metrics["power"], 0.0503, places=4)
+        self.assertFalse(metrics["adequate_power"])
+
+    def test_power_analysis_marks_single_pair_as_unestimable(self):
+        metrics = compute_statistical_power(
+            sample_size=1,
+            paired_delta_std=0.1,
+            target_delta=0.02,
+        )
+
+        self.assertIsNone(metrics["power"])
+        self.assertIsNone(metrics["mde"])
+        self.assertFalse(metrics["adequate_power"])
 
     def test_gate_alert_drift_on_wide_ci_or_judge_inconsistency(self):
         """Verify evaluation volatility flags ALERT_DRIFT."""

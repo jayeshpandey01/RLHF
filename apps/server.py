@@ -1,5 +1,6 @@
 import os
 import re
+from functools import partial
 from typing import Any
 
 import httpx
@@ -91,7 +92,19 @@ def create_app(
     def submit_training_job() -> tuple[str, bool]:
         if worker is None or jobs is None:
             raise RuntimeError("The Hugging Face training worker is not configured.")
-        return jobs.submit(worker.train_evaluate_and_package, promote_ollama_candidate)
+        active_model = mgr.get_active_model()
+        if isinstance(active_model, str):
+            train = partial(
+                worker.train_evaluate_and_package,
+                baseline_model=active_model,
+            )
+        elif isinstance(worker, HuggingFaceLoRAWorker):
+            raise RuntimeError(
+                "Hugging Face candidate evaluation requires the active Ollama model tag."
+            )
+        else:
+            train = worker.train_evaluate_and_package
+        return jobs.submit(train, promote_ollama_candidate)
 
     def generate_with_ollama(query: str, evidence: list, model: str) -> str:
         context = "\n\n".join(
