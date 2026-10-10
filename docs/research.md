@@ -376,7 +376,7 @@ Web data ingestion for LLM post-training sits at the boundary of information ret
 3. **Raffel, C., et al. (2020)**: *Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer* (C4 Dataset Paper, JMLR).
    - Formalized heuristic quality filters: line-level deduplication, sentence length boundaries, terminal punctuation checks, and curly bracket / code boilerplate filtering.
 4. **Penedo, G., et al. (2023)**: *The RefinedWeb Dataset for Falcon LLM: Outperforming Curated Corpora with Web Data, and Web Data Only*. NeurIPS 2023.
-   - Demonstrated that aggressive deduplication (MinHash at Jaccard threshold $s = 0.80$) and line-level repetition filtering removes $50\%+$ of crawled web pages and yields models that outperform those trained on human-curated datasets.
+   - Demonstrated that aggressive deduplication (MinHash at Jaccard threshold $s = 0.80$) and line-level repetition filtering removes 50%+ of crawled web pages and yields models that outperform those trained on human-curated datasets.
 5. **Shumailov, I., et al. (2024)**: *AI models collapse when trained on recursively generated data*. Nature, 631, 755–759.
    - Shows, through theoretical analyses and experiments, that recursive training on generated data can cause distributional tails to be lost and model quality to degrade. The results depend on the data and learning setup; they are not a universal theorem that every synthetic-data pipeline has monotonically decreasing variance or irreversible collapse.
 6. **Dodge, J., et al. (2021)**: *Documenting Large Webtext Corpora: A Case Study on the Colossal Clean Crawled Corpus (C4)*. EMNLP 2021.
@@ -476,7 +476,7 @@ R_{\text{line}} = 1 - \frac{|\text{unique lines}|}{|\text{total lines}|} \le 0.2
 $$
 
 3. **Character Repetition Rate**: Fraction of characters in the top duplicated 2-grams, 3-grams, and 4-grams $\le 0.15$.
-4. **Stopword Density**: English stopword count $\ge 10\%$ of total words (filters out SEO spam and keyword stuffing).
+4. **Stopword Density**: English stopword count ≥ 10% of total words (filters out SEO spam and keyword stuffing).
 5. **Terminal Punctuation Ratio**: Fraction of sentences ending in valid punctuation (`.`, `!`, `?`, `"`, `'`) $\ge 0.70$.
 
 #### 7. Benchmark Contamination Guard (Dodge et al., 2021)
@@ -713,7 +713,7 @@ Modern LLM post-training collapses when trained on uncurated, repetitive, or con
 
 | Frontier System | Primary Source / Organization | Key Architectural Innovations |
 | :--- | :--- | :--- |
-| **FineWeb** (2024) | Hugging Face (Penedo et al.) | 15T token corpus. Uses Trafilatura DOM parsing, MinHash LSH ($m=128$, 5-grams, $b=14, r=9$ or $b=32, r=4$), stopword filtering ($\ge 10\%$), line repetition bounds ($< 30\%$). |
+| **FineWeb** (2024) | Hugging Face (Penedo et al.) | 15T token corpus. Uses Trafilatura DOM parsing, MinHash LSH ($m=128$, 5-grams, $b=14, r=9$ or $b=32, r=4$), stopword filtering (≥ 10%), line repetition bounds (< 30%). |
 | **RefinedWeb / Falcon** (2023) | TII (Penedo et al.) | Proved that aggressive document deduplication and line-level repetition filtering matches or outperforms curated books/Wikipedia. |
 | **Data-Juicer** (2024) | Alibaba Cloud (Chen et al.) | 100+ composable data operators organized in a DAG with strict cost-ordered execution (cheapest rejects first). |
 | **SlimPajama / RedPajama-V2** (2023) | Together AI / Cerebras | MinHash deduplication removed 49.6% redundant tokens without loss of perplexity, slashing compute by 50%. |
@@ -786,8 +786,10 @@ $$
 For $K = 128$, the maximum standard deviation (occurring at $J = 0.5$) is:
 
 $$
-\sigma_{\max} = \sqrt{\frac{0.5 \times 0.5}{128}} = \sqrt{\frac{0.25}{128}} \approx 0.0442 \quad (\pm 4.42\%)
+\sigma_{\max} = \sqrt{\frac{0.5 \times 0.5}{128}} = \sqrt{\frac{0.25}{128}} \approx 0.0442
 $$
+
+This guarantees that Monte Carlo estimates remain within an empirical error bound of $\pm 0.0442$ (approximately ±4.42%).
 
 This guarantees high precision when distinguishing between dissimilar documents ($J < 0.40$) and near-duplicates ($J \ge 0.80$).
 
@@ -800,7 +802,7 @@ $$
 
 - At $s = 0.20$ (dissimilar): $P(0.20) = 1 - (1 - 0.0016)^{32} \approx 0.0499$ (95% true negative rate).
 - At $s = 0.50$ (moderate overlap): $P(0.50) = 1 - (1 - 0.0625)^{32} \approx 0.873$.
-- At $s = 0.80$ (near-duplicate): $P(0.80) = 1 - (1 - 0.4096)^{32} \approx 0.99999995$ ($> 99.9999\%$ detection rate).
+- At $s = 0.80$ (near-duplicate): $P(0.80) = 1 - (1 - 0.4096)^{32} \approx 0.99999995$ (> 99.9999% detection rate).
 
 ##### C. 13-Gram Benchmark Contamination Guard Formulation
 Following Dodge et al. (2021), given a held-out benchmark evaluation suite $\mathcal{B} = \{ (q_i, y_i^*) \}_{i=1}^N$:
@@ -1086,14 +1088,18 @@ $$
 *Numerical Example*: For MiniGPT with $d = 256$ and rank $r = 8$:
 
 $$
-\rho = \frac{2 \times 8}{256} = \frac{16}{256} = 0.0625 \implies \mathbf{93.75\% \text{ reduction in trainable parameters}}
+\rho = \frac{2 \times 8}{256} = \frac{16}{256} = 0.0625
 $$
+
+This represents a **93.75% reduction** in trainable parameters.
 
 For a standard 7B model ($d = 4096, r = 8$):
 
 $$
-\rho = \frac{2 \times 8}{4096} = \frac{16}{4096} = 0.0039 \implies \mathbf{99.61\% \text{ reduction in trainable parameters}}
+\rho = \frac{2 \times 8}{4096} = \frac{16}{4096} \approx 0.0039
 $$
+
+This represents a **99.61% reduction** in trainable parameters.
 
 ##### Optimizer Memory Savings:
 In AdamW, each trainable parameter requires 8 bytes of optimizer state (4 bytes for the first moment $m_t$, 4 bytes for the second moment $v_t$) plus 4 bytes for the master fp32 gradient.
@@ -1212,7 +1218,7 @@ $$
 \forall t < M, \quad \frac{\partial \mathcal{L}_{\text{completion}}}{\partial z_t} = \mathbf{0}
 $$
 
-*Proof*: Since $Y_t = -100$ for $t < M$, $\text{CrossEntropyLoss}$ ignores index $t$, setting $\frac{\partial \mathcal{L}}{\partial z_t} \equiv \mathbf{0}$. Therefore, the model is never penalized for the arbitrary phrasing, grammar, or vocabulary choices in the user's prompt. $100\%$ of the gradient budget is concentrated on synthesizing high-quality responses.
+*Proof*: Since $Y_t = -100$ for $t < M$, $\text{CrossEntropyLoss}$ ignores index $t$, setting $\frac{\partial \mathcal{L}}{\partial z_t} \equiv \mathbf{0}$. Therefore, the model is never penalized for the arbitrary phrasing, grammar, or vocabulary choices in the user's prompt. 100% of the gradient budget is concentrated on synthesizing high-quality responses.
 
 ---
 
@@ -1381,7 +1387,7 @@ flowchart LR
      - `unmerge_lora_weights(model)`: Subtracts $\frac{\alpha}{r} B A$ to restore baseline weights.
 - **Verification Gates**:
   - Identity at $t=0$: Model output with freshly initialized LoRA layers is bit-for-bit identical to base model output ($|\Delta h| < 10^{-6}$).
-  - Parameter reduction: Trainable parameters account for $< 10\%$ of total model parameters.
+  - Parameter reduction: Trainable parameters account for < 10% of total model parameters.
   - Merge invariance: Output of merged model exactly equals output of unmerged LoRA model.
   - Unmerge parity: Restored base model recovers original pretrained activations.
 
@@ -1420,8 +1426,8 @@ $$
 $$
 
      - `evaluate_regression_gate()`: Emits `RegressionResult`:
-       - `PASS`: If $\text{PPL}_{\text{domain}} < \text{PPL}_{\text{base}}^{\text{domain}}$ AND $\Delta \text{PPL}_{\text{anchor}} \le 5\%$.
-       - `FAIL_FORGETTING`: If $\Delta \text{PPL}_{\text{anchor}} > 5\%$. Triggers automatic recommendation to increase replay buffer anchor ratio $\lambda$ (e.g. from $70\%$ to $85\%$) or lower LoRA rank/learning rate.
+       - `PASS`: If $\text{PPL}_{\text{domain}} < \text{PPL}_{\text{base}}^{\text{domain}}$ AND $\Delta \text{PPL}_{\text{anchor}} \le 0.05$ (5%).
+       - `FAIL_FORGETTING`: If $\Delta \text{PPL}_{\text{anchor}} > 0.05$ (5%). Triggers automatic recommendation to increase replay buffer anchor ratio $\lambda$ (e.g. from 70% to 85%) or lower LoRA rank/learning rate.
   2. `training/m3_sft/orchestrator.py`:
      - `ContinualSFTOrchestrator`: Turnkey coordinator connecting Ingested Web Data (M2) $\to$ ChatML Dataset Harmonizer (P3.1) $\to$ LoRA Injection (P3.2) $\to$ SFT Training (P3.3) $\to$ Regression Gate (P3.4) $\to$ Zero-Latency Weight Merging.
 - **Verification Gates**:
@@ -1434,7 +1440,7 @@ $$
 #### Phase 3 Verification Matrix & Master Test Suite
 A dedicated master test file `tests/test_m3_sft.py` will be registered with `tests/run_all.py` covering:
 1. `test_chatml_formatter_and_completion_masking`: Verifies `-100` prompt masking and assistant target alignment.
-2. `test_lora_initialization_identity_and_param_ratio`: Verifies $\Delta h |_{t=0} = 0$ and $>90\%$ parameter reduction.
+2. `test_lora_initialization_identity_and_param_ratio`: Verifies $\Delta h |_{t=0} = 0$ and > 90% parameter reduction.
 3. `test_lora_merge_and_unmerge_numerical_parity`: Verifies zero-latency weight merging and reversible restoration.
 4. `test_sft_trainer_step_and_base_weight_immutability`: Verifies loss descent and base weight gradient immutability.
 5. `test_regression_gate_anti_forgetting`: Verifies gate pass/fail logic against drift thresholds.
@@ -1453,7 +1459,7 @@ $$
 $$
 
 ##### Why Raw Language Modeling Loss Breaks Instruction Following:
-1. **Prompt Memorization & Gradient Cannibalization**: In an unmasked autoregressive training run, if the prompt has length $M$ and the completion has length $K$, $\frac{M}{M+K}$ of the gradient updates are spent optimizing transitions between arbitrary prompt words chosen by the prompter (e.g. system preamble, formatting punctuation, question style). For long system prompts, over $70\%$ of the gradient capacity is wasted memorizing the input rather than refining the model's reasoning or answer generation.
+1. **Prompt Memorization & Gradient Cannibalization**: In an unmasked autoregressive training run, if the prompt has length $M$ and the completion has length $K$, $\frac{M}{M+K}$ of the gradient updates are spent optimizing transitions between arbitrary prompt words chosen by the prompter (e.g. system preamble, formatting punctuation, question style). For long system prompts, over 70% of the gradient capacity is wasted memorizing the input rather than refining the model's reasoning or answer generation.
 2. **Role Bleed & Hallucinated Prompts**: When models are trained with loss on the prompt, they frequently output user headers during generation (e.g., generating `"<|im_start|>user\nWhat is your name?<|im_end|>"` instead of stopping at `<|im_end|>`).
 3. **Boundary Splitting Hazard in Tokenizers**: Standard BPE and character tokenizers often merge punctuation with preceding or following characters (e.g. `\n<|` or `assistant\n`). If a collator naively splits on token IDs without respecting multi-token string delimiters, delimiter token sequences can mutate across tokenization boundaries. A robust collator must handle substring boundary matching in both token and character spaces.
 
@@ -1512,7 +1518,7 @@ $$
 \frac{\partial \mathcal{I}_{\text{masked}}(\theta)}{\partial \theta_{\text{prompt}}} = \mathbf{0}
 $$
 
-*Significance*: The empirical Hessian and Fisher Information are $100\%$ concentrated on the parameter manifold governing generation fidelity, eliminating parameter drift induced by prompt phrasing variance.
+*Significance*: The empirical Hessian and Fisher Information are 100% concentrated on the parameter manifold governing generation fidelity, eliminating parameter drift induced by prompt phrasing variance.
 
 ---
 
@@ -1633,7 +1639,7 @@ class HarmonizedSFTDataset(torch.utils.data.Dataset):
    - Exact `-100` prompt masking and active assistant loss alignment.
    - Batch collation and padding behavior.
    - $70:30$ convex replay buffer mixture sampling.
-5. **Step 3.1.5**: Register `tests/test_m3_sft.py` into `tests/run_all.py` and verify $100\%$ pass rate across all suites.
+5. **Step 3.1.5**: Register `tests/test_m3_sft.py` into `tests/run_all.py` and verify 100% pass rate across all suites.
 
 ---
 
@@ -1649,10 +1655,10 @@ Low-Rank Adaptation (LoRA) has emerged as the industry standard for foundation m
 
 | Adaptation Paradigm | Trainable Parameters | Memory Overhead | Inference Latency Overhead | Mathematical Formulation |
 | :--- | :--- | :--- | :--- | :--- |
-| **Full Fine-Tuning** | $100\%$ ($d_{\text{out}} \times d_{\text{in}}$) | $4\times$ to $6\times$ (Optimizer Moments) | $0\%$ | $W \leftarrow W + \eta \nabla_W \mathcal{L}$ |
-| **Standard LoRA (Hu 2022)** | $< 5\text{--}10\%$ ($r(d_{\text{in}} + d_{\text{out}})$) | $< 10\%$ (Frozen Base Optimizer) | $0\%$ (When merged) | $W = W_0 + \frac{\alpha}{r} B A$ |
-| **DoRA (Liu et al. 2024)** | $< 6\text{--}11\%$ ($+ d_{\text{in}}$ magnitude) | $< 12\%$ | $0\%$ (When merged) | $W = m \odot \frac{W_0 + \Delta W}{\|W_0 + \Delta W\|_F}$ |
-| **LoRA+ (Hayou et al. 2024)** | $< 5\text{--}10\%$ | $< 10\%$ | $0\%$ (When merged) | Ratio $\frac{\eta_B}{\eta_A} = \lambda \frac{d_{\text{out}}}{d_{\text{in}}}$ |
+| **Full Fine-Tuning** | 100% ($d_{\text{out}} \times d_{\text{in}}$) | $4\times$ to $6\times$ (Optimizer Moments) | 0% | $W \leftarrow W + \eta \nabla_W \mathcal{L}$ |
+| **Standard LoRA (Hu 2022)** | < 5–10% ($r(d_{\text{in}} + d_{\text{out}})$) | < 10% (Frozen Base Optimizer) | 0% (When merged) | $W = W_0 + \frac{\alpha}{r} B A$ |
+| **DoRA (Liu et al. 2024)** | < 6–11% ($+ d_{\text{in}}$ magnitude) | < 12% | 0% (When merged) | $W = m \odot \frac{W_0 + \Delta W}{\|W_0 + \Delta W\|_F}$ |
+| **LoRA+ (Hayou et al. 2024)** | < 5–10% | < 10% | 0% (When merged) | Ratio $\frac{\eta_B}{\eta_A} = \lambda \frac{d_{\text{out}}}{d_{\text{in}}}$ |
 
 ---
 
@@ -1891,7 +1897,7 @@ def load_adapter_weights(model: nn.Module, adapter_path: str | Path) -> None:
 2. **Step 3.2.2**: Export public LoRA APIs in `training/m3_sft/__init__.py`.
 3. **Step 3.2.3**: Expand `tests/test_m3_sft.py` with Phase 3.2 unit tests:
    - Initial identity forward parity ($|\Delta h| < 10^{-6}$ at $t=0$).
-   - Trainable parameter ratio verification ($>90\%$ reduction).
+   - Trainable parameter ratio verification (> 90% reduction).
    - In-place merge and unmerge numerical equality.
    - Gradient isolation verification (`param.grad is None` for base weights).
    - Adapter serialization and state reloading round-trip.
@@ -2111,9 +2117,9 @@ In an autonomous continual learning architecture, the greatest risk during domai
 3. **Automated Regression Testing in Production LLMs (EleutherAI, Meta LLaMA, DeepSeek)**:
    - Open-source releases enforce automated qualification gates before any model weight update is merged:
      - The adapted checkpoint is strictly benchmarked on a held-out anchor evaluation set $\mathcal{D}_{\text{eval}}^{\text{anchor}}$.
-     - If the relative perplexity drift $\Delta \text{PPL}_{\text{anchor}}$ exceeds an allowable tolerance $\tau$ (typically $3\text{--}5\%$), deployment is blocked and weights are rolled back.
+     - If the relative perplexity drift $\Delta \text{PPL}_{\text{anchor}}$ exceeds an allowable tolerance $\tau$ (typically 3–5%), deployment is blocked and weights are rolled back.
 4. **Autonomous Self-Correction & Hyperparameter Rebalancing**:
-   - If forgetting is detected, rather than failing silently or corrupting the foundation model, the system autonomously increases the replay buffer anchor ratio $\lambda$ (e.g. from $70\%$ to $85\%$) and reduces the adapter learning rate before re-attempting adaptation.
+   - If forgetting is detected, rather than failing silently or corrupting the foundation model, the system autonomously increases the replay buffer anchor ratio $\lambda$ (e.g. from 70% to 85%) and reduces the adapter learning rate before re-attempting adaptation.
 
 ---
 
@@ -2147,7 +2153,7 @@ $$
 $$
 
 - A value of $\Delta \text{PPL}_{\text{anchor}} \le 0$ indicates zero degradation (or positive transfer).
-- A value of $\Delta \text{PPL}_{\text{anchor}} > \tau_{\text{forget}}$ ($5\%$) indicates catastrophic forgetting.
+- A value of $\Delta \text{PPL}_{\text{anchor}} > \tau_{\text{forget}}$ (5%) indicates catastrophic forgetting.
 
 #### 3. Relative Domain Knowledge Gain:
 
@@ -2476,10 +2482,10 @@ $$
 \bar{d}^{(b)} = \frac{1}{N} \sum_{k=1}^N d_{j_k}^{(b)}
 $$
 
-3. Sort replicates $\bar{d}^{(1)} \le \dots \le \bar{d}^{(B)}$ to obtain empirical $95\%$ Confidence Interval:
+3. Sort replicates $\bar{d}^{(1)} \le \dots \le \bar{d}^{(B)}$ to obtain empirical 95% Confidence Interval:
 
 $$
-\text{CI}_{95\%} = \left[ \bar{d}_{(\lfloor 0.025 B \rfloor)}, \; \bar{d}_{(\lceil 0.975 B \rceil)} \right]
+\text{CI}_{0.95} = \left[ \bar{d}_{(\lfloor 0.025 B \rfloor)}, \; \bar{d}_{(\lceil 0.975 B \rceil)} \right]
 $$
 
 4. Compute empirical $p$-value:
@@ -2504,8 +2510,10 @@ Where the criteria are:
 1. **Anti-Forgetting Criterion**:
 
 $$
-\mathcal{C}_{\text{forgetting}} \iff \Delta \text{PPL}_{\text{anchor}} = \frac{\text{PPL}(\theta_{\text{cand}}, \mathcal{D}_{\text{anchor}}) - \text{PPL}(\theta_0, \mathcal{D}_{\text{anchor}})}{\text{PPL}(\theta_0, \mathcal{D}_{\text{anchor}})} \times 100 \le \tau_{\text{forget}} \quad (\tau_{\text{forget}} = 5.0\%)
+\mathcal{C}_{\text{forgetting}} \iff \Delta \text{PPL}_{\text{anchor}} = \frac{\text{PPL}(\theta_{\text{cand}}, \mathcal{D}_{\text{anchor}}) - \text{PPL}(\theta_0, \mathcal{D}_{\text{anchor}})}{\text{PPL}(\theta_0, \mathcal{D}_{\text{anchor}})} \times 100 \le \tau_{\text{forget}}
 $$
+
+where the forgetting tolerance threshold is $\tau_{\text{forget}} = 5.0$ (specifying a 5.0% maximum allowable perplexity drift).
 
 2. **Citation Faithfulness Criterion**:
 
@@ -2522,7 +2530,7 @@ $$
 4. **Statistical Significance Guard**:
 
 $$
-\mathcal{C}_{\text{statistical\_sig}} \iff \text{CI}_{95\%}^{\text{lower}}(\Delta \text{Score}) > -\delta_{\text{tol}} \land p_{\text{bootstrap}} < 0.05
+\mathcal{C}_{\text{statistical\_sig}} \iff \text{CI}_{0.95}^{\text{lower}}(\Delta \text{Score}) > -\delta_{\text{tol}} \land p_{\text{bootstrap}} < 0.05
 $$
 
 Upon `REJECTED`, the failure diagnosis records the offending violation mode:
@@ -2737,10 +2745,20 @@ class AutonomousReleaseGate:
    - *Mitigation*: The `CitationVerifier` cross-references all extracted markers against the document passage index; unmapped markers incur an immediate precision penalty.
 2. **Verbosity Bias Exploitation**:
    - *Problem*: Candidate generates excessive fluff to simulate comprehensiveness.
-   - *Mitigation*: The judge penalizes responses exceeding $1.5\times$ reference answer length via exponential penalty: $w_{\text{len}} = \min(1.0, \exp(1 - \frac{|Y|}{|Y_{\text{ref}}| \cdot 1.5}))$.
+   - *Mitigation*: The judge penalizes responses exceeding 1.5× reference answer length via an exponential length penalty:
+
+$$
+w_{\text{len}} = \min\left(1.0, \; \exp\left(1 - \frac{|Y|}{1.5 \cdot |Y_{\text{ref}}|}\right)\right)
+$$
+
 3. **Small Sample Size Variance**:
    - *Problem*: With $N=30$ benchmark cases, raw accuracy differences can be noisy.
-   - *Mitigation*: Bootstrap resampling with $B=1000$ iterations computes the full distribution of differences; release approval strictly requires the lower bound of the $95\%$ CI to not cross the regression tolerance: $\text{CI}_{\text{lower}} > -0.02$.
+   - *Mitigation*: Bootstrap resampling with $B=1000$ iterations computes the full distribution of differences; release approval strictly requires the lower bound of the 95% Confidence Interval to not cross the regression tolerance:
+
+$$
+\text{CI}_{\text{lower}} > -0.02
+$$
+
 4. **Degenerate Single-Sentence Answers**:
    - *Problem*: Short responses might bypass claim segmentation.
    - *Mitigation*: The claim extractor falls back to atomic clause parsing using conjunction and clause boundary tokens if sentence count is 1.
@@ -3103,7 +3121,7 @@ class CitationVerifier:
 ### 9.10 Section 9.3: LLM-as-a-Judge Engine, Rubric Calibration, & Systematic Bias Mitigation
 
 #### 1. Theoretical Motivation & Foundations
-In automated LLM alignment and continual post-training workflows, standard n-gram overlap metrics (BLEU, ROUGE) are well-known to correlate poorly with human judgments of reasoning depth, conceptual correctness, and stylistic coherence. Zheng et al. (NeurIPS 2023, *"Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena"*) demonstrated that strong LLMs acting as automated judges achieve $>80\%$ agreement with human domain experts.
+In automated LLM alignment and continual post-training workflows, standard n-gram overlap metrics (BLEU, ROUGE) are well-known to correlate poorly with human judgments of reasoning depth, conceptual correctness, and stylistic coherence. Zheng et al. (NeurIPS 2023, *"Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena"*) demonstrated that strong LLMs acting as automated judges achieve > 80% agreement with human domain experts.
 
 However, uncalibrated LLM judges exhibit severe systematic cognitive biases that distort benchmark outcomes if left unmitigated:
 1. **Position Bias (Order Effect)**:
@@ -4256,7 +4274,7 @@ class RewardTrainer:
    - Preference collator shape verification and attention mask pooling indices.
    - Bradley-Terry loss numerical stability and margin enforcement.
    - RewardModel forward pass and pooling invariance to padding tokens.
-   - RewardTrainer training convergence on synthetic preference pairs (accuracy $> 90\%$, margin $> 0$).
+   - RewardTrainer training convergence on synthetic preference pairs (accuracy > 90%, margin $> 0$).
 8. **Step 5.1.8**: Register `tests/test_m5_reward_model.py` into `tests/run_all.py` and verify 100% test pass rate across all milestones (M0–M5).
 
 ---
@@ -4474,7 +4492,7 @@ tests/
    - Test DPO loss numerical stability with large positive and negative reward deltas.
    - Test cDPO and IPO loss branches.
    - Test reference caching parity (live reference model vs cached log-probs produce identical loss).
-   - Test `DPOTrainer` convergence on preference pairs (accuracy $> 80\%$, margin $> 0$).
+   - Test `DPOTrainer` convergence on preference pairs (accuracy > 80%, margin $> 0$).
 
 6. **Step 5.2.6: Registration & Verification**:
    - Add `TestM5DPO` to `tests/run_all.py` and verify all tests pass with 0 regressions.
@@ -5342,7 +5360,7 @@ flowchart TD
 | **vLLM** | Kwon et al. (*SOSP 2023*, UC Berkeley) | **PagedAttention & Continuous Batching** | Dynamic iteration-level request insertion; eliminates internal memory fragmentation, achieving $2\times - 4\times$ throughput vs static batching. |
 | **Orca** | Yu et al. (*OSDI 2022*) | **Iteration-Level Scheduling** | Decouples batch processing from sequence length; new requests join the forward pass mid-flight without waiting for older requests to finish decoding. |
 | **GPTCache** | Bang et al. (*2023*, Zilliz) | **Semantic Caching for LLMs** | Vector similarity lookup over past user queries ($\text{sim} \ge 0.95$). Bypasses retrieval and LLM generation entirely for frequent queries. |
-| **WAND / Tantivy** | Broder et al. (*CIKM 2003*) | **Weak AND Dynamic Pruning** | Prunes non-competitive documents before computing full Okapi BM25 scores, reducing inverted index lookup latency by $80\%$. |
+| **WAND / Tantivy** | Broder et al. (*CIKM 2003*) | **Weak AND Dynamic Pruning** | Prunes non-competitive documents before computing full Okapi BM25 scores, reducing inverted index lookup latency by 80%. |
 | **Ray Serve** | Moritz et al. (*OSDI 2018*, Anyscale) | **Actor-Based Micro-Batching & Async Queues** | Distributes serving actors across worker pools with lock-free bounded queues and worker autoscaling. |
 | **Token Bucket** | Turner (*IEEE Comm 1986*) | **Rate Limiting & Leaky Bucket** | Regulates bursty traffic ($100 \to 1000\text{ req/s}$) to smooth out compute demand and prevent system saturation. |
 
@@ -5363,7 +5381,7 @@ $$
 \mathcal{B}_t = \{r_i \mid \text{state}(r_i) == \text{GENERATING}\}
 $$
 
-If request $r_j$ completes generation at step $t$, it is immediately evicted and replaced by candidate request $r_{k}$ from the waiting queue, maximizing GPU tensor core utilization to near $100\%$.
+If request $r_j$ completes generation at step $t$, it is immediately evicted and replaced by candidate request $r_{k}$ from the waiting queue, maximizing GPU tensor core utilization to near 100%.
 
 ###### 2. Semantic Caching Formulation
 Let query $q$ have dense embedding $\mathbf{e}_q$. Let cache pool $\mathcal{C} = \{(q_i, \mathbf{e}_{q_i}, \mathcal{R}_i)\}_{i=1}^M$.
@@ -5382,7 +5400,7 @@ $$
 \end{cases}
 $$
 
-With $\tau_{\text{cache}} = 0.95$, typically $30\% - 50\%$ of identical/paraphrased user queries during peak events are served directly from cache, reducing downstream retrieval and model load by up to half.
+With $\tau_{\text{cache}} = 0.95$, typically 30%–50% of identical/paraphrased user queries during peak events are served directly from cache, reducing downstream retrieval and model load by up to half.
 
 ###### 3. Request Coalescing & Debouncing
 When $N$ requests $\{q_1, \dots, q_N\}$ arrive within a debounce window $\Delta t_{\text{debounce}}$ (e.g. $2.0\text{ seconds}$), the coalescer groups them using MinHash or embedding similarity into $K \ll N$ canonical clusters. Only $K$ distinct ingestion requests are dispatched to the web scraper, achieving an $N/K$-fold reduction in external bandwidth and preprocessing compute.
